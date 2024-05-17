@@ -1,0 +1,4 @@
+name = "MrFOR"
+uuid = "652e9e7b-025e-40fa-a37d-3dffc9b6d7c7"
+authors = ["Antonello Lobianco <antonello@lobianco.org>"]
+version = "0.1.0"
