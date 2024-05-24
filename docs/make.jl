@@ -1,8 +1,8 @@
 using Documenter
-using MrFOR
+using GenFSM
 
 push!(LOAD_PATH,"../src/")
-makedocs(sitename="MrFOR.jl Documentation",
+makedocs(sitename="GenFSM.jl Documentation",
          pages = [
             "Index" => "index.md",
             "An other page" => "anotherPage.md",
@@ -13,6 +13,6 @@ makedocs(sitename="MrFOR.jl Documentation",
 # See "Hosting Documentation" and deploydocs() in the Documenter manual
 # for more information.
 deploydocs(
-    repo = "github.com/ecoformod/MrFOR.jl.git",
+    repo = "github.com/forestmod/GenFSM.jl.git",
     devbranch = "main"
 )

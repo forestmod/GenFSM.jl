@@ -1,4 +1,4 @@
-using Test, MrFOR
+using Test, GenFSM
 
 out = plusTwo(3)
 

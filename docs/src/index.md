@@ -1,3 +1,3 @@
-# MrFOR.jl
+# GenFSM.jl
 
-Documentation for [MrFOR.jl](https://github.com/ecoformod/MrFOR.jl/)
+Documentation for [GenFSM.jl](https://github.com/forestmod/GenFSM.jl/)

@@ -1,4 +1,8 @@
-name = "MrFOR"
+name = "GenFSM"
 uuid = "652e9e7b-025e-40fa-a37d-3dffc9b6d7c7"
 authors = ["Antonello Lobianco <antonello@lobianco.org>"]
 version = "0.1.0"
+
+[deps]
+GenFSM_resources = "731fd045-8cb1-4036-8c04-a2a477f3265a"
+GenFSM_simrep = "e5fbde05-ec85-4709-bff1-7478e167bca3"

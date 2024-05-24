@@ -1,20 +1,20 @@
-# The MrFOR Module
+# The GenFSM Module
 
 
 ```@docs
-MrFOR
+GenFSM
 ```
 
 ## Module Index
 
 ```@index
-Modules = [MrFOR]
+Modules = [GenFSM]
 Order   = [:constant, :type, :function, :macro]
 ```
 ## Detailed API
 
 ```@autodocs
-Modules = [MrFOR]
+Modules = [GenFSM]
 Order   = [:constant, :type, :function, :macro]
 ```
 
