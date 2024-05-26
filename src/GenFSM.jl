@@ -11,10 +11,12 @@ function run(project="default",scenario="default")
     settings = REP.load_settings(project,scenario)
     years    = settings["years"]
     dc       = settings["dc"]
-    ft       = load the data
+   # ft       = load the data
+    ft = 1
     region   = settings["simulation_region"]
     init_regions = settings["resource_init_regions"]
-    pixels   = RES.init(ft,dc,years,region,init_regions) # return the initialized pixels
+    # first get the unistialized pixels
+    #pixels   = RES.init(ft,dc,years,region,init_regions) # return the initialized pixels
 end
 
 
