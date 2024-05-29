@@ -5,4 +5,15 @@ version = "0.1.0"
 
 [deps]
 GenFSM_resources = "731fd045-8cb1-4036-8c04-a2a477f3265a"
+GenFSM_resources_init_fr = "78598d3f-d65b-4630-9136-a3bfe5c9de2f"
 GenFSM_simrep = "e5fbde05-ec85-4709-bff1-7478e167bca3"
+Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
+Rasters = "a3a2b9e3-a471-40c9-b274-f788e487c689"
+
+[compat]
+julia = "1.9"
+
+[sources]
+GenFSM_simrep = {url = "git@github.com:forestmod/GenFSM_simrep.jl.git", rev = "main"}
+GenFSM_resources = {url = "git@github.com:forestmod/GenFSM_resources.jl.git", rev = "main"}
+GenFSM_resources_init_fr = {url = "git@github.com:forestmod/GenFSM_resources_init_fr.jl.git", rev = "main"}
