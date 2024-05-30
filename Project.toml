@@ -13,7 +13,8 @@ Rasters = "a3a2b9e3-a471-40c9-b274-f788e487c689"
 [compat]
 julia = "1.9"
 
-[sources]
-GenFSM_simrep = {url = "git@github.com:forestmod/GenFSM_simrep.jl.git", rev = "main"}
-GenFSM_resources = {url = "git@github.com:forestmod/GenFSM_resources.jl.git", rev = "main"}
-GenFSM_resources_init_fr = {url = "git@github.com:forestmod/GenFSM_resources_init_fr.jl.git", rev = "main"}
+#[sources]
+#GenFSM_simrep = {path = "GenFSM_simrep"}
+#GenFSM_simrep = {url = "git@github.com:forestmod/GenFSM_simrep.jl.git", rev = "main"}
+#GenFSM_resources = {url = "git@github.com:forestmod/GenFSM_resources.jl.git", rev = "main"}
+#GenFSM_resources_init_fr = {url = "git@github.com:forestmod/GenFSM_resources_init_fr.jl.git", rev = "main"}
