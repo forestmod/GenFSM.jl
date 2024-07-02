@@ -26,7 +26,7 @@ Run a scenario of GenFSM
 """
 function run(project="default",scenario="default";override=[])
     settings = REP.load_settings(project,scenario,override=override)
-    region   = settings["simulation_region"]
+    region = settings["simulqtion_region"]
     resources_regions = settings["res"]["regions"]
     # first get the raster map and the unistialized pixels
     raster_mask = RES.make_raster_mask(region)

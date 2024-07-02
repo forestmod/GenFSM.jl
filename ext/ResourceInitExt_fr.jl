@@ -11,7 +11,7 @@ import GenFSM_resources_init_fr
 
 function resources_init_fr!(pixels,mask,settings)
     # Do the initialization by calling the init function in the package GenFSM_resources_fr
-    return GenFSM_resources_init_fr.init!(pixels,mask,settings)
+    return GenFSM_resources_init_fr.init!!(pixels,mask,settings)
 end
 
 
