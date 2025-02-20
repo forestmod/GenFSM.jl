@@ -1,0 +1,10 @@
+# Settings for the resources module
+
+# List of the modules managing the specification of the resource model for a given region
+regions: ["fr"] 
+
+# Diameter classes (dict)
+dc: {1: 7.5, 2: 15, 3: 25, 4: 35, 5: 45, 6: 55, 7: 65, 8: 75, 9: 85, 10: 95, 11: 150, 12: 9999}
+
+# Path of the file defining the forest types
+ft_list:  ${SCENARIO_PATH}/res/forest_types.txt

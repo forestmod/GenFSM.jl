@@ -1,0 +1,34 @@
+# A vector with the information of what data to force download
+# possible values are: (empty, default), "dtm", "soil", "adm_borders", "clc", "forinv"
+force_download: []
+# A vector with the information of which parts of ML workflow to force retrain
+force_ml_train: []
+
+data_sources:
+  dtm_url: "https://geodata.ucdavis.edu/climate/worldclim/2_1/base/wc2.1_30s_elev.zip"
+  soil_ph_url: "https://esdac.jrc.ec.europa.eu/wyz_856/_33_GSM/${VAR}_Extra.zip"
+  soil_chem_url: "https://esdac.jrc.ec.europa.eu/public_path/shared_folder/dataset/60/${VAR}.zip"
+  soil_oth_url: "https://esdac.jrc.ec.europa.eu/wyz_856/_24_DER/STU_EU_Layers.zip"
+  soil_ph_vars: ["Clay","Silt","Sand","CoarseFragments","BulkDensity","TextureUSDA","AWC"]
+  soil_chem_vars: ["pH_H2O","pH_CaCl","CEC","Caco3","CN","N","P","K","pH_H2O_ratio_Cacl"]
+  soil_oth_vars: ["STU_EU_DEPTH_ROOTS", "STU_EU_T_CLAY", "STU_EU_S_CLAY", "STU_EU_T_SAND", "STU_EU_S_SAND", "STU_EU_T_SILT", "STU_EU_S_SILT", "STU_EU_T_OC", "STU_EU_S_OC", "STU_EU_T_BD", "STU_EU_S_BD", "STU_EU_T_GRAVEL", "STU_EU_S_GRAVEL", "SMU_EU_T_TAWC", "SMU_EU_S_TAWC", "STU_EU_T_TAWC", "STU_EU_S_TAWC"]
+  soil_texture_n_classes: 12
+  #admin_borders_sources: ["https://github.com/wmgeolab/geoBoundaries/raw/v6.0.0/releaseData/gbOpen/FRA/ADM1/geoBoundaries-FRA-ADM1.geojson?download="]
+  admin_borders_sources: [
+    "https://github.com/wmgeolab/geoBoundaries/raw/v6.0.0/releaseData/gbOpen/FRA/ADM1/geoBoundaries-FRA-ADM1.dbf?download=",
+    "https://github.com/wmgeolab/geoBoundaries/raw/v6.0.0/releaseData/gbOpen/FRA/ADM1/geoBoundaries-FRA-ADM1.prj?download=",
+    "https://github.com/wmgeolab/geoBoundaries/raw/v6.0.0/releaseData/gbOpen/FRA/ADM1/geoBoundaries-FRA-ADM1.shp?download=",
+    "https://github.com/wmgeolab/geoBoundaries/raw/v6.0.0/releaseData/gbOpen/FRA/ADM1/geoBoundaries-FRA-ADM1.shx?download="
+  ]
+  admin_borders_input_crs: 4326
+  # Corine Land Cover 2018 V2020_20u1 vector (25 ha/100 m):
+  # - source: https://land.copernicus.eu/en/products/corine-land-cover/clc2018
+  # - DOI: https://doi.org/10.2909/71c95a07-e296-44fc-b22b-415f42acfdf0
+  # Consider also:
+  # - Land cover classification gridded maps world (300m): https://cds.climate.copernicus.eu/cdsapp#!/dataset/satellite-land-cover?tab=overview
+  # - CLC+ (10m, new classification):   
+  clc_url: "https://zenodo.org/records/11549846/files/U2018_CLC2018_V2020_20u1.gpkg?download=1" # "https://nc.beta-lorraine.fr/s/9NrqQBmR5ib2wmd/download"
+  # Forest inventory data: 
+  # https://inventaire-forestier.ign.fr/dataIFN/
+  forest_inventory_url: "https://inventaire-forestier.ign.fr/dataifn/data/export_dataifn_2005_2022.zip"
+  forest_inventory_cres_epsg_id:  2154

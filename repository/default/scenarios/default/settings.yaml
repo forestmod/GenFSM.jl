@@ -1,0 +1,36 @@
+# General settings
+
+# Definition of the region under simulation
+# This values cover France only
+# Check conversion on https://epsg.io/transform
+# Apply conversion using the `Proj` package:
+# using Proj
+# trans = Proj.Transformation("EPSG:4326", "EPSG:3035", always_xy=true)
+# (X,Y) = trans(2.35,48.85) # Paris
+# Note that (X,Y) = 10,52 is the center of the EEA Ref grid
+# https://sdi.eea.europa.eu/catalogue/srv/api/records/3792c53b-1944-444a-a317-2fc478abc664/attachments/eea_reference_grid_v1.pdf
+simulation_region:
+  cres_epsg_id: 3035
+  x_lb: 2985000   # 2.980269469245921e6 # -6 in EPSG:4326 (i.e. WGS 84 ellipsoid unprojected)   2980269.469245921 3232351.9642307153
+  x_ub: 4321000 # 4.4321000e6 # 10  4321000 4321000 4321000
+  y_lb: 1994000 # 1.988977918697293e6 # 41 1988977.9186972934 2131472.196486537
+  y_ub: 3210000 # 3.330257880562832e6 # 52 3210000 3330257.880562832
+  xres: 2000 # meters
+  yres: 2000 # meters
+years:
+  start: 2021
+  step:  1
+  end:   2024 
+verbosity:  FULL # NONE, LOW, STD, HIGH, FULL, 
+  
+
+# Output paths:
+# - temp: get erased after model ends
+# - cache: save temporary stuff, like downloaded data and MD trained models. This can be reused between simulations
+# - out: save model results
+temp_path: "temp"
+cache_path: "cache"
+output_path: "out"
+
+
+

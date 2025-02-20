@@ -1,3 +1,4 @@
 using Test, GenFSM
 
-#include("Test_utilities.jl")
+include("test_scenario_load.jl")
+#include("test_res.jl")

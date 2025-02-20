@@ -1,0 +1,4 @@
+Fagus_sylvatica_hf
+Fagus_sylvatica_coppices
+Fagus_sylvatica_mixed
+Picea_abies_hf
