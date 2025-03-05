@@ -1,3 +1,10 @@
+# To build the documentation:
+#    - julia --project="." make.jl
+#    - empty!(ARGS); include("make.jl")
+# To build the documentation without running the tests:
+#    - julia --project="." make.jl preview
+#    - push!(ARGS,"preview"); include("make.jl")
+
 using Documenter
 using GenFSM
 
@@ -7,7 +14,8 @@ makedocs(sitename="GenFSM.jl Documentation",
             "Index" => "index.md",
             "An other page" => "anotherPage.md",
          ],
-         format = Documenter.HTML(prettyurls = false)
+         format = Documenter.HTML(prettyurls = false),
+         warnonly = true
 )
 # Documenter can also automatically deploy documentation to gh-pages.
 # See "Hosting Documentation" and deploydocs() in the Documenter manual

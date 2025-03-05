@@ -1,3 +1,9 @@
+"""
+    GenFSM module
+
+Main module of the GenFSM package
+
+"""
 module GenFSM
 
 
@@ -33,13 +39,9 @@ Run a scenario of GenFSM
 - `override`: a dictionary (keys=>new value) which eventually overrides the settings as specified in the region/scenario (e.g. for output directories)
 """
 function runsim(project="default",scenario="default";override=Dict{Any,Any}())
-    #Base.retry_load_extensions() 
-    # Load general settings (and early override of paths)
-    settings = SLOAD.load_settings(project,scenario,override=override)
-    # Load settings for the RES module (including regions)
-    RES.load_settings!(settings)
-    # Override all the other settings
-    SLOAD.override_nested_dict!(settings,override)
+
+    settings = SLOAD.load_full_settings(project,scenario,override=override)
+
     region = settings["simulation_region"]
     resources_regions = settings["res"]["regions"]
     # first get the raster map and the unistialized pixels
