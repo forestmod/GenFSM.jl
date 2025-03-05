@@ -17,17 +17,18 @@ module ScenarioLoader
 
 using DocStringExtensions
 using YAML, DelimitedFiles
-export load_settings
+
+import GenFSM
 
 include("Utils.jl")
 
 """
-    load_settings(project="default",scenario="default")
+    load_general_settings(project="default",scenario="default")
 
 Load the settings for a specific project and scenario.
 The settings are returned as a dictionary.
 """
-function load_settings(project="default",scenario="default";override=Dict{Any,Any}())
+function load_general_settings(project="default",scenario="default";override=Dict{Any,Any}())
 
     # Load default settings
     # Load and override scenario-specific (general, model level) settings
@@ -67,5 +68,19 @@ function load_settings(project="default",scenario="default";override=Dict{Any,An
     isdir(settings["output_path"]) || mkpath(settings["output_path"])
     return settings
 end
+
+
+function load_full_settings(project,scenario;override=Dict())
+    # Base.retry_load_extensions() 
+    # Load general settings (and early override of paths)
+    settings = load_general_settings(project,scenario,override=override)
+    # Load settings for the RES module (including regions)
+    GenFSM.Res.load_settings!(settings;override=override)
+    # Override all the other settings from command line
+    override_nested_dict!(settings,override)
+    return settings
+end
+
+
 
 end # module GenFSM_simrep

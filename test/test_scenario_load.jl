@@ -36,7 +36,6 @@ d1  = Dict("a" => 1, "b" => Dict(1 => 10, 2 => 20, 3 => Dict(1 => 100, 2 => 200)
 result = SLOAD.override_nested_dict!(d1, d2; strict=false)
 d1 == Dict("a" => 1, "b" => Dict(1 => 10, 2 => 20, 3 => Dict(1 => 1000, 2 => 200), 4 => 40))
 
-
 ## Override is a dictionray of tuples...
 nested_dict = Dict("a" => Dict("b" => 1, "c" => 2), "d" => 3, "e" => Dict("f" => 4, "g" => Dict("h" => 5, "i" => 6)))
 override = Dict(("e","g","h") => 50, ("e","f") => 40)
@@ -52,7 +51,8 @@ SLOAD.override_nested_dict!(nested_dict,override)
 # -----------------------------------------------------------------------------
 # Testing load_settings...
 override = Dict("caller_path"=>joinpath(pwd(),"foo"),("res","fr","force_download")=>["clc"])
-settings = SLOAD.load_settings("default","default";override=override)
+settings = SLOAD.load_general_settings("default","default";override=override)
+
 
 @test (startswith(settings["temp_path"], "/") || settings["temp_path"][2] == ':')
 @test endswith(settings["temp_path"], "/test/foo/default/temp/default")
@@ -63,16 +63,7 @@ SLOAD.override_nested_dict!(settings,override)
 
 @test settings["res"]["fr"]["force_download"] == ["clc"]
 
-function test_get_full_settings(project,scenario;override=Dict())
-    settings = SLOAD.load_settings(project,scenario,override=override)
-    # Load settings for the RES module (including regions)
-    RES.load_settings!(settings;override=override)
-    # Override all the other settings
-    SLOAD.override_nested_dict!(settings,override)
-    return settings
-end
-
-default_settings = test_get_full_settings("default","default")
+default_settings = SLOAD.load_full_settings("default","default")
 @test  endswith(default_settings["default_scenario_path"],"/repository/default/scenarios/default")
 @test  endswith(default_settings["scenario_path"],"/repository/default/scenarios/default")
 @test  endswith(default_settings["temp_path"],"GenFSM/test/default/temp/default")
@@ -82,7 +73,7 @@ default_settings = test_get_full_settings("default","default")
 @test default_settings["res"]["fr"]["data_sources"]["clim"]["fixed_climate"] == true
 
 
-scen_settings = test_get_full_settings("default","cc_low")
+scen_settings = SLOAD.load_full_settings("default","cc_low")
 @test  endswith(scen_settings["default_scenario_path"],"/repository/default/scenarios/default")
 @test  endswith(scen_settings["scenario_path"],"/repository/default/scenarios/cc_low")
 @test  endswith(scen_settings["temp_path"],"GenFSM/test/default/temp/cc_low")
@@ -92,7 +83,7 @@ scen_settings = test_get_full_settings("default","cc_low")
 @test scen_settings["res"]["fr"]["data_sources"]["clim"]["table_id"] == "Amon"
 @test scen_settings["res"]["fr"]["data_sources"]["clim"]["experiment_id"] == "ssp126"
 
-overridden_settings = test_get_full_settings("default","cc_strong",override=Dict(("res","fr","data_sources","clim","table_id") =>"test", "temp_path" => "/tmp", "simulation_region" => Dict("x_lb" => 0.0) ))
+overridden_settings = SLOAD.load_full_settings("default","cc_strong",override=Dict(("res","fr","data_sources","clim","table_id") =>"test", "temp_path" => "/tmp", "simulation_region" => Dict("x_lb" => 0.0) ))
 @test endswith(overridden_settings["default_scenario_path"],"/repository/default/scenarios/default")
 @test endswith(overridden_settings["scenario_path"],"/repository/default/scenarios/cc_strong")
 @test endswith(overridden_settings["temp_path"],"/tmp")
@@ -103,3 +94,4 @@ overridden_settings = test_get_full_settings("default","cc_strong",override=Dict
 @test overridden_settings["res"]["fr"]["data_sources"]["clim"]["experiment_id"] == "ssp585"
 @test overridden_settings["res"]["fr"]["data_sources"]["clim"]["member_id"] == "r1i1p1f1"
 @test overridden_settings["simulation_region"]["nx"] == Int(ceil((overridden_settings["simulation_region"]["x_ub"] - overridden_settings["simulation_region"]["x_lb"]) / overridden_settings["simulation_region"]["xres"]))
+
