@@ -1,5 +1,12 @@
 
+"""
+    $(TYPEDSIGNATURES)
 
+Initialization function of the `Res` module for the French region
+
+
+    
+"""
 function _init!!(pixels,settings,overal_region_mask)
 
     println("hello in Res_fr.init!!")

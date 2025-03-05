@@ -18,19 +18,19 @@ simulation_region:
   xres: 2000 # meters
   yres: 2000 # meters
 years:
-  start: 2021
+  start: 2024
   step:  1
-  end:   2024 
+  end:   2100 
 verbosity:  FULL # NONE, LOW, STD, HIGH, FULL, 
   
 
 # Output paths:
 # - temp: get erased after model ends
 # - cache: save temporary stuff, like downloaded data and MD trained models. This can be reused between simulations
-# - out: save model results
-temp_path: "temp"
+# - out: save model results. This is normally scenario based
+temp_path: "temp/default"
 cache_path: "cache"
-output_path: "out"
+output_path: "out/default"
 
 
 

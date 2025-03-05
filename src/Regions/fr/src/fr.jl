@@ -2,6 +2,8 @@
 module Res_fr
 import ..GenFSM.Res
 
+using DocStringExtensions
+
 import Downloads 
 import ArchGDAL, Rasters, ZipFile, DataStructures # , FTPClient
 import Geomorphometry # for slope and aspect 
@@ -37,6 +39,7 @@ end # End module Res_fr
 
 # ------------------------------------------------------------------------------
 module Mkt_fr
+using DocStringExtensions
 
 end
 

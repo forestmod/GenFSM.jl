@@ -8,16 +8,19 @@ function get_data!(settings,mask)
     @info  "Getting data for the resource initialization for France..."
     input_rasters = Dict{Any,Any}()
     @info  "- getting dtm..."
-    input_rasters = merge(input_rasters,get_dtm(settings,mask))
+    imput_raster["dtm"] = get_dtm(settings,mask)
+    #input_rasters = merge(input_rasters,get_dtm(settings,mask))
     @info  "- getting soil data..."
-    input_rasters = merge(input_rasters,get_soil_data(settings,mask))
+    input_raster["soil"] = get_soil_data(settings,mask)
+    #input_rasters = merge(input_rasters,get_soil_data(settings,mask))
     @info  "- getting clc..."
-    input_rasters = merge(input_rasters,get_clc(settings,mask))
-    
+    input_raster["clc"] = get_clc(settings,mask)
+    #input_rasters = merge(input_rasters,get_clc(settings,mask))
     settings["res"]["fr"]["input_rasters"] = input_rasters
     @info  "- getting inventory data..."
     inv_data = get_inventory_data(settings,mask)
-    println(inv_data)
+    settings["res"]["fr"]["inv_data"] = inv_data
+    
     @info  "- DONE getting data"
 
 end

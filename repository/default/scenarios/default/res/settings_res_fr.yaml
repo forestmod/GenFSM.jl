@@ -30,5 +30,21 @@ data_sources:
   clc_url: "https://zenodo.org/records/11549846/files/U2018_CLC2018_V2020_20u1.gpkg?download=1" # "https://nc.beta-lorraine.fr/s/9NrqQBmR5ib2wmd/download"
   # Forest inventory data: 
   # https://inventaire-forestier.ign.fr/dataIFN/
-  forest_inventory_url: "https://inventaire-forestier.ign.fr/dataifn/data/export_dataifn_2005_2022.zip"
+  forest_inventory_url: "https://inventaire-forestier.ign.fr/dataifn/data/export_dataifn_2005_2023.zip"
   forest_inventory_cres_epsg_id:  2154
+  clim:
+    vars: ["pr","tas","tasmax","tasmin"]
+    hist_year_min: 1979
+    hist_year_max: 2014
+    hist_base_url: "https://os.zhdk.cloud.switch.ch/chelsav2/GLOBAL/monthly/${VAR}/CHELSA_${VAR}_${MMONTH}_${YEAR}_V.2.1.tif"
+    activity_id: "ScenarioMIP" 
+    table_id:      "Amon"
+    fixed_climate: true 
+    experiment_id: "ssp585" 
+    institution_id: "MPI-M" 
+    source_id: "MPI-ESM1-2-HR" 
+    member_id: "r1i1p1f1"
+    refps: "1981-01-15"
+    refpe: "2010-12-15"
+    fefps: "2100-01-15"
+    fefpe: "2100-12-15"

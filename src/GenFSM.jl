@@ -1,7 +1,7 @@
 module GenFSM
 
 
-
+using DocStringExtensions
 
 
 export runsim
@@ -53,7 +53,7 @@ function runsim(project="default",scenario="default";override=Dict{Any,Any}())
 
 
     # ...
-    rm(settings["temp_path"]; force=true, recursive=true)
+    #rm(settings["temp_path"]; force=true, recursive=true) # TODO: uncomment this
     return settings
 end
 
