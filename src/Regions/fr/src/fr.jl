@@ -2,7 +2,7 @@
 module Res_fr
 import ..GenFSM.Res
 
-using DocStringExtensions
+using DocStringExtensions, Dates
 
 import Downloads 
 import ArchGDAL, Rasters, ZipFile, DataStructures # , FTPClient

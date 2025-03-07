@@ -20,7 +20,8 @@ function get_data!(settings,mask)
     @info  "- getting inventory data..."
     inv_data = get_inventory_data(settings,mask)
     settings["res"]["fr"]["inv_data"] = inv_data
-    
+    climate_data = get_climate_data(settings,mask)
+    settings["res"]["fr"]["climate_data"] = climate_data
     @info  "- DONE getting data"
 
 end
@@ -75,7 +76,6 @@ Terrain Ruggedness Index)
 """
 function get_dtm(settings,mask)
     data_path        = joinpath(settings["res"]["fr"]["cache_path"],"dtm")
-    println(data_path)
     isdir(data_path) || mkpath(data_path)
     force            = "dtm" in settings["res"]["fr"]["force_download"]
     url              = settings["res"]["fr"]["data_sources"]["dtm_url"]
@@ -305,4 +305,124 @@ function get_inventory_data(settings,mask)
     CSV.write(forinv_data["points"],points)
     rm(forinv_dldirpath,recursive=true)
     return forinv_vars
+end
+
+"""
+   get_climate_data(settings,mask)
+
+Download the historical and (eventually) the future climate data
+"""
+function get_climate_data(settings,mask)
+
+    verbosity      = settings["verbosity"]
+    verbose        = verbosity in ["HIGH", "FULL"] 
+    to             = mask
+
+    # Remember that scenario is already embedded in the temp path, butthe cache path shares several scenarios
+    cl_h_temppath        = joinpath(settings["res"]["fr"]["temp_path"],"clim_historical")
+    cl_h_cachepath       = joinpath(settings["res"]["fr"]["cache_path"],"clim_historical")
+    cl_f_temppath        = joinpath(settings["res"]["fr"]["temp_path"],"clim_future")
+    cl_f_cachepath       = joinpath(settings["res"]["fr"]["cache_path"],"clim_future",settings["scenario"])
+
+    clim_settings = settings["res"]["fr"]["data_sources"]["clim"]
+    force_h  = "clim_h" in settings["res"]["fr"]["force_download"]
+    force_f  = "clim_f" in settings["res"]["fr"]["force_download"]  
+    freeze =  clim_settings["fixed_climate"]
+    vars   =  clim_settings["vars"]
+    hyears =  clim_settings["hist_years"]
+    fyears =  parse(Int64,clim_settings["fefps"][1:4]):parse(Int64,clim_settings["fefpe"][1:4])
+    mmonths = [m<10 ? "0$m" : "$m" for m in 1:12]
+
+    hclim_data      = DataStructures.OrderedDict{Tuple,String}()
+    fclim_data      = DataStructures.OrderedDict{Tuple,String}()
+
+    [hclim_data[(var,m,y)] = joinpath(cl_h_cachepath,"var_$(var)_$(m)_$(y).tif") for var in vars, m in 1:12, y in hyears]
+
+    [fclim_data[(var,m,y)] = joinpath(cl_f_cachepath,) for var in vars, m in 1:12, y in fyears]
+
+    # Download the historical dataset
+
+    #(force_h == false && isdir(cl_h_cachepath)) &&  return hclim_data
+    #todo: change logic as there are two different download here 
+
+    if !isdir(cl_h_cachepath) || force_h == true
+
+        isdir(cl_h_temppath)  || mkpath(cl_h_temppath)
+        isdir(cl_h_cachepath) || mkpath(cl_h_cachepath)
+        @info "Downloading raw historical climatic data..."
+
+        hist_base_url = clim_settings["hist_base_url"]
+
+        
+        for v in vars, m in 1:12
+            for y in hyears
+                mm  = mmonths[m]
+                url = replace(hist_base_url, "\${VAR}" => v, "\${MMONTH}" => mm, "\${YEAR}" => y )
+                temp_path  = joinpath(cl_h_temppath,"var_$(v)_$(m)_$(y).tif")
+                final_path = joinpath(cl_h_cachepath,"var_$(v)_$(m)_$(y).tif")
+                Downloads.download(url,temp_path, verbose=verbose)
+                orig_raster      = Rasters.Raster(temp_path)
+                resampled_raster = Rasters.resample(orig_raster,to=mask,method=:average)
+                write(final_path, resampled_raster, force=true)
+                rm(temp_path) # I should not need to use neither force nor recursive
+            end
+        end
+        
+        println("shoudn't be here")
+    end
+
+    # Downloading scenario-based future climatic data
+    (force_f == false && isdir(cl_f_cachepath)) &&  return (hclim_data, fclim_data)
+
+    isdir(cl_f_temppath)  || mkpath(cl_f_temppath)
+    isdir(cl_f_cachepath) || mkpath(cl_f_cachepath)
+
+    if clim_settings["fixed_climate"]
+        @info "Copying historical clim data as future data..."
+        # Setting as future weather the last 10 years of obs weather, cyclically
+        # The cycle reverses direction at each last_obs_years step
+        last_obs_years = hyears[max(1,length(hyears)-10):end]
+        deltay = -1
+        ihy    = length(last_obs_years)
+        for (iy, y) in enumerate(fyears)
+            hy = last_obs_years[ihy]
+            for v in vars, m in 1:12
+                source_path = joinpath(cl_h_cachepath,"var_$(v)_$(m)_$(hy).tif")
+                source_rel_path = joinpath("..","..","clim_historical","var_$(v)_$(m)_$(hy).tif")
+                dest_path   = joinpath(cl_f_cachepath,"var_$(v)_$(m)_$(y).tif")
+                isfile(dest_path) && rm(dest_path)
+                try
+                    if Sys.iswindows() && Sys.windows_version() < Sys.WINDOWS_VISTA_VER
+                        cp(source_path,dest_path)
+                    else
+                        symlink(source_rel_path, dest_path)
+                    end
+                catch
+                    cp(source_path,dest_path)
+                end
+            end
+            # updatting index for next yearly loop
+            (ihy == 1) && (deltay = +1)
+            (ihy == length(last_obs_years)) && (deltay = -1)
+            ihy = ihy + deltay
+        end
+        return (hclim_data, fclim_data)
+    end
+
+    # Not in a freezing scenario, let's download scenario-specific future climatic data...
+    @info "Downloading climatic future data..."
+
+    return (hclim_data, fclim_data)
+
+
+
+
+
+    #isdir(data_path) || mkpath(data_path)
+    # Getting historical data
+
+    # Getting future data or copy last 10 historical data as future data (periodically.. present-10 to present)
+
+
+
 end

@@ -25,8 +25,8 @@ include("Regions/fr/src/fr.jl")
 
 #import ScenarioLoader as SLOAD
 
-SLOAD = ScenarioLoader
-RES   = Res
+const SLOAD = ScenarioLoader
+const RES   = Res
 
 """
     run(project,scenario;override)
