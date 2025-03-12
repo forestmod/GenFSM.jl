@@ -13,6 +13,13 @@ import Proj # to convert the (X,Y) coordinates of the inventory points
 import GeoDataFrames
 import Logging
 
+import PythonCall
+import CondaPkg
+const Chelsa      = PythonCall.pyimport("chelsa_cmip6")
+const GetClim     = PythonCall.pyimport("chelsa_cmip6.GetClim")
+
+
+
 include(joinpath("Res","Utils.jl"))
 include(joinpath("Res","Get_data.jl"))
 include(joinpath("Res","Init.jl"))

@@ -316,8 +316,7 @@ function get_climate_data(settings,mask)
 
     verbosity      = settings["verbosity"]
     verbose        = verbosity in ["HIGH", "FULL"] 
-    to             = mask
-
+    
     # Remember that scenario is already embedded in the temp path, butthe cache path shares several scenarios
     cl_h_temppath        = joinpath(settings["res"]["fr"]["temp_path"],"clim_historical")
     cl_h_cachepath       = joinpath(settings["res"]["fr"]["cache_path"],"clim_historical")
@@ -332,19 +331,17 @@ function get_climate_data(settings,mask)
     hyears =  clim_settings["hist_years"]
     fyears =  parse(Int64,clim_settings["fefps"][1:4]):parse(Int64,clim_settings["fefpe"][1:4])
     mmonths = [m<10 ? "0$m" : "$m" for m in 1:12]
+    tr_fs_h = clim_settings["transformations_h"]
+    tr_fs_f = clim_settings["transformations_f"]
 
     hclim_data      = DataStructures.OrderedDict{Tuple,String}()
     fclim_data      = DataStructures.OrderedDict{Tuple,String}()
 
     [hclim_data[(var,m,y)] = joinpath(cl_h_cachepath,"var_$(var)_$(m)_$(y).tif") for var in vars, m in 1:12, y in hyears]
 
-    [fclim_data[(var,m,y)] = joinpath(cl_f_cachepath,) for var in vars, m in 1:12, y in fyears]
+    [fclim_data[(var,m,y)] = joinpath(cl_f_cachepath,"var_$(var)_$(m)_$(y).tif") for var in vars, m in 1:12, y in fyears]
 
-    # Download the historical dataset
-
-    #(force_h == false && isdir(cl_h_cachepath)) &&  return hclim_data
-    #todo: change logic as there are two different download here 
-
+    # Download the historical dataset...
     if !isdir(cl_h_cachepath) || force_h == true
 
         isdir(cl_h_temppath)  || mkpath(cl_h_temppath)
@@ -355,24 +352,26 @@ function get_climate_data(settings,mask)
 
         
         for v in vars, m in 1:12
+            tr_f_str = (tr_fs_h == nothing) ? "identity" : get(tr_fs_h,v,"identity")
+            tr_f = eval(Meta.parse(tr_f_str))
             for y in hyears
                 mm  = mmonths[m]
                 url = replace(hist_base_url, "\${VAR}" => v, "\${MMONTH}" => mm, "\${YEAR}" => y )
                 temp_path  = joinpath(cl_h_temppath,"var_$(v)_$(m)_$(y).tif")
                 final_path = joinpath(cl_h_cachepath,"var_$(v)_$(m)_$(y).tif")
                 Downloads.download(url,temp_path, verbose=verbose)
-                orig_raster      = Rasters.Raster(temp_path)
+                orig_raster    = Rasters.Raster(temp_path)
+                orig_raster   .= tr_f.(orig_raster) # transformation to align measure unit or to correct bias
                 resampled_raster = Rasters.resample(orig_raster,to=mask,method=:average)
                 write(final_path, resampled_raster, force=true)
                 rm(temp_path) # I should not need to use neither force nor recursive
             end
         end
         
-        println("shoudn't be here")
     end
 
     # Downloading scenario-based future climatic data
-    (force_f == false && isdir(cl_f_cachepath)) &&  return (hclim_data, fclim_data)
+    #(force_f == false && isdir(cl_f_cachepath)) &&  return (hclim_data, fclim_data)
 
     isdir(cl_f_temppath)  || mkpath(cl_f_temppath)
     isdir(cl_f_cachepath) || mkpath(cl_f_cachepath)
@@ -412,17 +411,91 @@ function get_climate_data(settings,mask)
     # Not in a freezing scenario, let's download scenario-specific future climatic data...
     @info "Downloading climatic future data..."
 
+    fut_base_path = clim_settings["fut_base_path"]
+    projid    = settings["simulation_region"]["cres_epsg_id"]
+    x_lb_proj = settings["simulation_region"]["x_lb"]
+    y_lb_proj = settings["simulation_region"]["y_lb"]
+    x_ub_proj = settings["simulation_region"]["x_ub"]
+    y_ub_proj = settings["simulation_region"]["y_ub"]
+    inv_trans = Proj.Transformation("EPSG:$(projid)","EPSG:4326",always_xy=true)
+
+    # Trasformation in geographical coordinates for the area to download
+    x_lb1,_ = inv_trans(x_lb_proj,y_lb_proj)
+    x_lb2,_ = inv_trans(x_lb_proj,y_ub_proj)
+    x_lb    = min(x_lb1,x_lb2) - 0.05
+    _,y_lb1 = inv_trans(x_lb_proj,y_lb_proj)
+    _,y_lb2 = inv_trans(x_ub_proj,y_lb_proj)
+    y_lb    = min(y_lb1,y_lb2) - 0.05
+    x_ub1,_ = inv_trans(x_ub_proj,y_lb_proj)
+    x_ub2,_ = inv_trans(x_ub_proj,y_ub_proj)
+    x_ub    = max(x_ub1,x_ub2) + 0.05
+    _,y_ub1 = inv_trans(x_lb_proj,y_ub_proj)
+    _,y_ub2 = inv_trans(x_ub_proj,y_ub_proj)
+    y_ub    = max(y_ub1,y_ub2) + 0.05
+
+    for fy in fyears
+        ## Download year data
+        cl_f_temppath_y = joinpath(cl_f_temppath,"$(fy)/",)
+        isdir(cl_f_temppath_y)  || mkpath(cl_f_temppath_y)
+    
+        CondaPkg.withenv() do
+            # All this because it doesn't work with just the function call
+            python = CondaPkg.which("python")
+            chelsa_script = joinpath(cl_f_temppath,"00_chelsa_dl_cmip6_$(fy).py")
+    
+            write(chelsa_script,
+"""
+from chelsa_cmip6.GetClim import chelsa_cmip6
+
+chelsa_cmip6(
+    activity_id='$(clim_settings["activity_id"])', 
+    table_id='$(clim_settings["table_id"])', 
+    experiment_id='$(clim_settings["experiment_id"])', 
+    institution_id='$(clim_settings["institution_id"])', 
+    source_id='$(clim_settings["source_id"])', 
+    member_id='$(clim_settings["member_id"])', 
+    refps='$(clim_settings["refps"])', 
+    refpe='$(clim_settings["refpe"])', 
+    fefps='$(fy)$(clim_settings["fefps"][5:end])', 
+    fefpe='$(fy)$(clim_settings["fefpe"][5:end])', 
+    xmin=$(x_lb), 
+    xmax=$(x_ub),
+    ymin=$(y_lb), 
+    ymax=$(y_ub),
+    output='$(cl_f_temppath_y)',
+    use_esgf=False,
+    bio=False
+)
+""")
+           run(`$python $(chelsa_script)`)
+        end
+
+        for v in vars
+            tr_f_str = (tr_fs_f == nothing) ? "identity" : get(tr_fs_f,v,"identity")
+            tr_f = eval(Meta.parse(tr_f_str))
+            saved_path =  replace(fut_base_path,
+                "\${INSTITUTION_ID}" => clim_settings["institution_id"],
+                "\${SOURCE_ID}" => clim_settings["source_id"],
+                "\${VAR}" => v,
+                "\${EXPERIMENT_ID}" => clim_settings["experiment_id"],
+                "\${MEMBER_ID}" => clim_settings["member_id"],
+                "\${FEFPS}" => "$(fy)$(clim_settings["fefps"][5:end])",
+                "\${FEFPE}" => "$(fy)$(clim_settings["fefpe"][5:end])",
+                )
+            saved_fullpath = joinpath(cl_f_temppath_y,saved_path)
+            var_monthly  = Rasters.Raster(saved_fullpath; name=v)
+            var_monthly .= tr_f.(var_monthly) # transformation for bias or align measure unit
+            var_monthly = Rasters.reverse(var_monthly, dims=Rasters.Y) # the nc data is not in the North-first format
+            resampled_raster = Rasters.resample(var_monthly,to=mask,method=:average)
+            for m in 1:12 
+                final_path = joinpath(cl_f_cachepath,"var_$(v)_$(m)_$(fy).tif")
+                write(final_path, resampled_raster[:,:,m], force=true)
+            end 
+        end
+        #rm(cl_f_temppath_y)
+    end # end of each fyear
+    
     return (hclim_data, fclim_data)
-
-
-
-
-
-    #isdir(data_path) || mkpath(data_path)
-    # Getting historical data
-
-    # Getting future data or copy last 10 historical data as future data (periodically.. present-10 to present)
-
 
 
 end

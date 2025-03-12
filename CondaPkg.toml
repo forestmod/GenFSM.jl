@@ -1,0 +1,4 @@
+
+[pip.deps]
+zarr = "~=2.18.3"
+chelsa-cmip6 = "@https://github.com/sylvaticus/chelsa_cmip6/archive/refs/heads/main.zip"

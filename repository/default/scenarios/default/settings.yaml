@@ -26,7 +26,7 @@ verbosity:  FULL # NONE, LOW, STD, HIGH, FULL,
 
 # Output paths:
 # - temp: get erased after model ends
-# - cache: save temporary stuff, like downloaded data and MD trained models. This can be reused between simulations
+# - cache: save temporary stuff, like downloaded data and MD trained models. This can be reused between simulations. It is normally shared between scenarios 
 # - out: save model results. This is normally scenario based
 temp_path: "temp/default"
 cache_path: "cache"
