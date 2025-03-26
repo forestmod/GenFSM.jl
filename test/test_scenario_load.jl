@@ -55,7 +55,7 @@ settings = SLOAD.load_general_settings("default","default";override=override)
 
 
 @test (startswith(settings["temp_path"], "/") || settings["temp_path"][2] == ':')
-@test endswith(settings["temp_path"], "/test/foo/default/temp/default")
+@test endswith(settings["temp_path"], joinpath(pwd(),"foo/default/temp/default"))
 RES.load_settings!(settings)
 
 # Override all the other settings
@@ -66,9 +66,9 @@ SLOAD.override_nested_dict!(settings,override)
 default_settings = SLOAD.load_full_settings("default","default")
 @test  endswith(default_settings["default_scenario_path"],"/repository/default/scenarios/default")
 @test  endswith(default_settings["scenario_path"],"/repository/default/scenarios/default")
-@test  endswith(default_settings["temp_path"],"/test/default/temp/default")
-@test  endswith(default_settings["cache_path"],"/test/default/cache")
-@test  endswith(default_settings["output_path"],"/test/default/out/default")
+@test  endswith(default_settings["temp_path"],joinpath(pwd(),"default/temp/default"))
+@test  endswith(default_settings["cache_path"],joinpath(pwd(),"default/cache"))
+@test  endswith(default_settings["output_path"],joinpath(pwd(),"/default/out/default"))
 @test default_settings["res"]["fr"]["data_sources"]["clim"]["table_id"] == "Amon" # this shoudn't change
 @test default_settings["res"]["fr"]["data_sources"]["clim"]["fixed_climate"] == true
 
@@ -76,9 +76,9 @@ default_settings = SLOAD.load_full_settings("default","default")
 scen_settings = SLOAD.load_full_settings("default","cc_low")
 @test  endswith(scen_settings["default_scenario_path"],"/repository/default/scenarios/default")
 @test  endswith(scen_settings["scenario_path"],"/repository/default/scenarios/cc_low")
-@test  endswith(scen_settings["temp_path"],"/test/default/temp/cc_low")
-@test  endswith(scen_settings["cache_path"],"/test/default/cache")
-@test  endswith(scen_settings["output_path"],"/test/default/out/cc_low")
+@test  endswith(scen_settings["temp_path"],joinpath(pwd(),"default/temp/cc_low"))
+@test  endswith(scen_settings["cache_path"],joinpath(pwd(),"default/cache"))
+@test  endswith(scen_settings["output_path"],joinpath(pwd(),"default/out/cc_low"))
 @test scen_settings["res"]["fr"]["data_sources"]["clim"]["fixed_climate"] == false
 @test scen_settings["res"]["fr"]["data_sources"]["clim"]["table_id"] == "Amon"
 @test scen_settings["res"]["fr"]["data_sources"]["clim"]["experiment_id"] == "ssp126"
@@ -87,8 +87,8 @@ overridden_settings = SLOAD.load_full_settings("default","cc_strong",override=Di
 @test endswith(overridden_settings["default_scenario_path"],"/repository/default/scenarios/default")
 @test endswith(overridden_settings["scenario_path"],"/repository/default/scenarios/cc_strong")
 @test endswith(overridden_settings["temp_path"],"/tmp")
-@test endswith(overridden_settings["cache_path"],"/test/default/cache")
-@test endswith(overridden_settings["output_path"],"/test/default/out/cc_strong")
+@test endswith(overridden_settings["cache_path"],joinpath(pwd(),"default/cache"))
+@test endswith(overridden_settings["output_path"],joinpath(pwd(),"default/out/cc_strong"))
 @test overridden_settings["res"]["fr"]["data_sources"]["clim"]["fixed_climate"] == false
 @test overridden_settings["res"]["fr"]["data_sources"]["clim"]["table_id"] == "test"
 @test overridden_settings["res"]["fr"]["data_sources"]["clim"]["experiment_id"] == "ssp585"
