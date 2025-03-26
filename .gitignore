@@ -24,4 +24,8 @@ docs/site/
 Manifest.toml
 
 # Local stuff
-/test/local_tests
+/dev_local
+
+# Local Conda stuff
+.CondaPkg
+

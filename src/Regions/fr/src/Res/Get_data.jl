@@ -8,20 +8,21 @@ function get_data!(settings,mask)
     @info  "Getting data for the resource initialization for France..."
     input_rasters = Dict{Any,Any}()
     @info  "- getting dtm..."
-    imput_raster["dtm"] = get_dtm(settings,mask)
+    input_rasters["dtm"] = get_dtm(settings,mask)
     #input_rasters = merge(input_rasters,get_dtm(settings,mask))
     @info  "- getting soil data..."
-    input_raster["soil"] = get_soil_data(settings,mask)
+    input_rasters["soil"] = get_soil_data(settings,mask)
     #input_rasters = merge(input_rasters,get_soil_data(settings,mask))
     @info  "- getting clc..."
-    input_raster["clc"] = get_clc(settings,mask)
+    input_rasters["clc"] = get_clc(settings,mask)
     #input_rasters = merge(input_rasters,get_clc(settings,mask))
+    @info  "- getting climate (historic or future depending on scenario)..."
+    input_rasters["clim"] = get_climate_data(settings,mask)
     settings["res"]["fr"]["input_rasters"] = input_rasters
     @info  "- getting inventory data..."
     inv_data = get_inventory_data(settings,mask)
     settings["res"]["fr"]["inv_data"] = inv_data
-    climate_data = get_climate_data(settings,mask)
-    settings["res"]["fr"]["climate_data"] = climate_data
+
     @info  "- DONE getting data"
 
 end
@@ -317,7 +318,7 @@ function get_climate_data(settings,mask)
     verbosity      = settings["verbosity"]
     verbose        = verbosity in ["HIGH", "FULL"] 
     
-    # Remember that scenario is already embedded in the temp path, butthe cache path shares several scenarios
+    # Remember that scenario is already embedded in the temp path, but the cache path shares several scenarios
     cl_h_temppath        = joinpath(settings["res"]["fr"]["temp_path"],"clim_historical")
     cl_h_cachepath       = joinpath(settings["res"]["fr"]["cache_path"],"clim_historical")
     cl_f_temppath        = joinpath(settings["res"]["fr"]["temp_path"],"clim_future")
@@ -361,7 +362,7 @@ function get_climate_data(settings,mask)
                 final_path = joinpath(cl_h_cachepath,"var_$(v)_$(m)_$(y).tif")
                 Downloads.download(url,temp_path, verbose=verbose)
                 orig_raster    = Rasters.Raster(temp_path)
-                orig_raster   .= tr_f.(orig_raster) # transformation to align measure unit or to correct bias
+                orig_raster    = invokelatest(Rasters.modify,tr_f,orig_raster) # transformation to align measure unit or to correct bias
                 resampled_raster = Rasters.resample(orig_raster,to=mask,method=:average)
                 write(final_path, resampled_raster, force=true)
                 rm(temp_path) # I should not need to use neither force nor recursive
@@ -371,7 +372,7 @@ function get_climate_data(settings,mask)
     end
 
     # Downloading scenario-based future climatic data
-    #(force_f == false && isdir(cl_f_cachepath)) &&  return (hclim_data, fclim_data)
+    (force_f == false && isdir(cl_f_cachepath)) &&  return Dict("historical"=>hclim_data, "future"=>fclim_data)
 
     isdir(cl_f_temppath)  || mkpath(cl_f_temppath)
     isdir(cl_f_cachepath) || mkpath(cl_f_cachepath)
@@ -405,7 +406,7 @@ function get_climate_data(settings,mask)
             (ihy == length(last_obs_years)) && (deltay = -1)
             ihy = ihy + deltay
         end
-        return (hclim_data, fclim_data)
+        return Dict("historical"=>hclim_data, "future"=>fclim_data)
     end
 
     # Not in a freezing scenario, let's download scenario-specific future climatic data...
@@ -484,7 +485,7 @@ chelsa_cmip6(
                 )
             saved_fullpath = joinpath(cl_f_temppath_y,saved_path)
             var_monthly  = Rasters.Raster(saved_fullpath; name=v)
-            var_monthly .= tr_f.(var_monthly) # transformation for bias or align measure unit
+            var_monthly = invokelatest(Rasters.modify,tr_f,var_monthly)  # transformation for bias or align measure unit
             var_monthly = Rasters.reverse(var_monthly, dims=Rasters.Y) # the nc data is not in the North-first format
             resampled_raster = Rasters.resample(var_monthly,to=mask,method=:average)
             for m in 1:12 
@@ -492,10 +493,10 @@ chelsa_cmip6(
                 write(final_path, resampled_raster[:,:,m], force=true)
             end 
         end
-        #rm(cl_f_temppath_y)
+        rm(cl_f_temppath_y, recursive=true)
     end # end of each fyear
     
-    return (hclim_data, fclim_data)
+    return Dict("historical"=>hclim_data, "future"=>fclim_data)
 
 
 end
