@@ -12,7 +12,9 @@ push!(LOAD_PATH,"../src/")
 makedocs(sitename="GenFSM.jl Documentation",
          pages = [
             "Index" => "index.md",
-            "An other page" => "anotherPage.md",
+            "GenFSM" => "GenFSM.md",
+            "ScenarioLoader" => "ScenarioLoader.md",
+            "Res" => "Res.md",
          ],
          format = Documenter.HTML(prettyurls = false),
          warnonly = true
