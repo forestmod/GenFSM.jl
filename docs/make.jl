@@ -7,6 +7,9 @@
 
 using Documenter
 using GenFSM
+using GenFSM.Res
+using GenFSM.ScenarioLoader
+
 
 push!(LOAD_PATH,"../src/")
 makedocs(sitename="GenFSM.jl Documentation",
