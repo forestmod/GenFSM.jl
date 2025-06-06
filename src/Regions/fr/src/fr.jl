@@ -5,6 +5,7 @@ import ..GenFSM.Res
 using DocStringExtensions, Dates
 
 import Downloads 
+import StatsBase
 import ArchGDAL, Rasters, ZipFile, DataStructures # , FTPClient
 import Geomorphometry # for slope and aspect 
 import Shapefile
@@ -12,6 +13,7 @@ import CSV, DataFrames
 import Proj # to convert the (X,Y) coordinates of the inventory points
 import GeoDataFrames
 import Logging
+import BetaML
 
 import PythonCall
 import CondaPkg
@@ -22,6 +24,7 @@ const GetClim     = PythonCall.pyimport("chelsa_cmip6.GetClim")
 
 include(joinpath("Res","Utils.jl"))
 include(joinpath("Res","Get_data.jl"))
+include(joinpath("Res","Prepare_data.jl"))
 include(joinpath("Res","Init.jl"))
 
 """

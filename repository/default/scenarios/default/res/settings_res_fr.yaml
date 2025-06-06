@@ -2,7 +2,12 @@
 # possible values are: (empty, default), "dtm", "soil", "adm_borders", "clc", "forinv"
 force_download: []
 # A vector with the information of which parts of ML workflow to force retrain
+# possible values are: (empty, default), "tree_volumes"
 force_ml_train: []
+# Other processing "force" options
+# possible values are: (empty, default), "ing_points", "prediction_hist_tree_volumes", 
+force_other: []
+
 
 data_sources:
   dtm_url: "https://geodata.ucdavis.edu/climate/worldclim/2_1/base/wc2.1_30s_elev.zip"
@@ -32,6 +37,7 @@ data_sources:
   # https://inventaire-forestier.ign.fr/dataIFN/
   forest_inventory_url: "https://inventaire-forestier.ign.fr/dataifn/data/export_dataifn_2005_2023.zip"
   forest_inventory_cres_epsg_id:  2154
+
   clim:
     # units: kg/m² (~mm), K, K, K
     vars: ["pr","tas","tasmax","tasmin"]
@@ -48,7 +54,8 @@ data_sources:
     activity_id: "ScenarioMIP" 
     table_id:      "Amon"
     fixed_climate: true 
-    experiment_id: "ssp126" 
+    experiment_id: "ssp126"
+    experiment_id_extreme: "ssp585"
     institution_id: "MPI-M" 
     source_id: "MPI-ESM1-2-LR" 
     member_id: "r1i1p1f1"
@@ -57,3 +64,8 @@ data_sources:
     fefps: "2015-01-01"
     fefpe: "2100-12-31"
 
+ign_data:
+  genders_broadleaves: ["Acer", "Aesculus", "Ailanthus", "Alnus", "Arbutus", "Betula", "Broussonetia", "Buxus", "Carpinus", "Castanea", "Catalpa", "Celtis", "Ceratonia", "Cercis", "Citrus", "Cornus", "Corylus", "Crataegus", "Cupressus", "Cydonia", "Diospyros", "Elaeagnus", "Erica", "Eucalyptus", "Euonymus", "Fagus", "Ficus", "Frangula", "Fraxinus", "Ilex", "Juglans", "Laburnum", "Laurus", "Liquidambar", "Liriodendron", "Maclura", "Malus", "Morus", "Olea", "Ostrya", "Paulownia", "Phillyrea", "Pistacia", "Platanus", "Populus", "Prunus", "Pyrus", "Quercus", "Rhamnus", "Rhus", "Robinia", "Salix", "Sambucus", "Sorbus", "Tamarix", "Tilia", "Ulmus", "Vachellia"]
+  genders_coniferous: ["Abies", "Casuarina", "Cedrus", "Chamaecyparis", "Cryptomeria", "Cupressus", "Juglans", "Juniperus", "Larix", "Picea", "Pinus", "Pseudotsuga", "Pyrus", "Sequoia", "Sequoiadendron", "Taxodium", "Taxus", "Thuja", "Tsuga"]
+  nsample_v_imputation: 1000
+  

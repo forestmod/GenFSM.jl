@@ -9,7 +9,7 @@ Initialization function of the `Res` module for the French region
 """
 function _init!!(pixels,settings,overal_region_mask)
 
-    println("hello in Res_fr.init!!")
+    println("Hello in Res_fr.init!!")
     
     temp_path = joinpath(settings["temp_path"],"res","fr")
     cache_path = joinpath(settings["cache_path"],"res","fr")
@@ -32,6 +32,9 @@ function _init!!(pixels,settings,overal_region_mask)
     #- DONE altimetry DTM
     #- DONE Corine land cover
     #- DONE (no elaboration) to check IGN
-    #- TODO Climate, accessibility index
+    #- DONE Climate
+    # Maybe TODO: accessibility index
    
+    prepare_data!(settings,mask)
+    
 end

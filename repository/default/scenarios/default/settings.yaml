@@ -33,4 +33,5 @@ cache_path: "cache"
 output_path: "out/default"
 
 
-
+# Random seed
+random_seed: 123

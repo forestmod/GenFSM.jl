@@ -6,7 +6,7 @@ Main module of the GenFSM package
 """
 module GenFSM
 
-
+using Random
 using DocStringExtensions
 
 
@@ -41,6 +41,7 @@ Run a scenario of GenFSM
 function runsim(project="default",scenario="default";override=Dict{Any,Any}())
 
     settings = SLOAD.load_full_settings(project,scenario,override=override)
+    Random.seed!(settings["random_seed"])
 
     region = settings["simulation_region"]
     resources_regions = settings["res"]["regions"]
@@ -48,7 +49,7 @@ function runsim(project="default",scenario="default";override=Dict{Any,Any}())
     # This is the global region mask, and it is always rectangular.
     # Then individual resource or market models can have their own masks
     raster_mask = RES.make_raster_mask(region)
-    pixels    = RES.make_pixels(settings["res"]["nft"],settings["res"]["ndc"],region["nx"],region["ny"])
+    pixels      = RES.make_pixels(settings["res"]["nft"],settings["res"]["ndc"],region["nx"],region["ny"])
 
 
     RES.init!!(pixels,settings,raster_mask)

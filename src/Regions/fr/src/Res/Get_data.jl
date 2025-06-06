@@ -149,6 +149,10 @@ function get_soil_data(settings,mask)
     https://esdac.jrc.ec.europa.eu/content/european-soil-database-derived-data
     Hiederer, R. 2013. Mapping Soil Properties for Europe - Spatial Representation of Soil Database Attributes. Luxembourg: Publications Office of the European Union - 2013 - 47pp. EUR26082EN Scientific and Technical Research series, ISSN 1831-9424, doi:10.2788/94128
     Hiederer, R. 2013. Mapping Soil Typologies - Spatial Decision Support Applied to European Soil Database. Luxembourg: Publications Office of the European Union - 2013 - 147pp. EUR25932EN Scientific and Technical Research series, ISSN 1831-9424, doi:10.2788/8728
+
+    Look also this: https://www.isric.org/explore/soilgrids
+    And lucas: calcares
+
     =#
 
     soil_path      = joinpath(settings["res"]["fr"]["cache_path"],"soil")
@@ -312,6 +316,10 @@ end
    get_climate_data(settings,mask)
 
 Download the historical and (eventually) the future climate data
+
+Look also:
+# AGera5 0.1 degrees
+# Agri4Cas: 0.3 degrees
 """
 function get_climate_data(settings,mask)
 
@@ -500,3 +508,5 @@ chelsa_cmip6(
 
 
 end
+
+
