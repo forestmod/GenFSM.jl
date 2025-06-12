@@ -76,6 +76,10 @@ function load_full_settings(project,scenario;override=Dict())
     settings = load_general_settings(project,scenario,override=override)
     # Load settings for the RES module (including regions)
     GenFSM.Res.load_settings!(settings;override=override)
+
+    # Moving verbosity from a string to a enum (integer), so we can say e.g. verbosity <= LOW
+    settings["verbosity"] = GenFSM.verbosity_map[settings["verbosity"]]
+
     # Override all the other settings from command line
     override_nested_dict!(settings,override)
     return settings

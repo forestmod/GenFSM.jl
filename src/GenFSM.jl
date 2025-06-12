@@ -10,9 +10,11 @@ using Random
 using DocStringExtensions
 
 
+export Verbosity, NONE, LOW, STD, HIGH, FULL
 export runsim
 
 
+include("Utils.jl")
 
 #push!(LOAD_PATH,joinpath(@__DIR__,"ScenarioLoader"))
 #import ScenarioLoader as SLOAD

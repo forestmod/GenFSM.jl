@@ -33,7 +33,7 @@ end
 function get_mask(settings,mask)
     force          = "adm_borders" in settings["res"]["fr"]["force_download"]
     verbosity      = settings["verbosity"]
-    verbose        = verbosity in ["HIGH", "FULL"] 
+    verbose        = verbosity >= HIGH
     admin_borders_input_crs = settings["res"]["fr"]["data_sources"]["admin_borders_input_crs"]
 
     adm_borders_path      = joinpath(settings["res"]["fr"]["cache_path"],"adm_borders")
@@ -83,7 +83,7 @@ function get_dtm(settings,mask)
     to               = mask
     filename         = basename(url)
     verbosity        = settings["verbosity"]
-    verbose          = verbosity in ["HIGH", "FULL"] 
+    verbose          = verbosity in [HIGH, FULL] 
     zip_destpath     = joinpath(data_path,filename)
     tif_destpath     = replace(zip_destpath,".zip" => ".tif")
     tif_destpath_reg = replace(tif_destpath,".tif" => "_reg.tif")
@@ -165,7 +165,7 @@ function get_soil_data(settings,mask)
     soil_oth_vars  = settings["res"]["fr"]["data_sources"]["soil_oth_vars"]
     force          = "soil" in settings["res"]["fr"]["force_download"]
     verbosity      = settings["verbosity"]
-    verbose        = verbosity in ["HIGH", "FULL"] 
+    verbose        = verbosity in [HIGH, FULL] 
     to             = mask
     soil_vars      = DataStructures.OrderedDict{String,String}()
     n_soil_ph_vars = length(soil_ph_vars)
@@ -324,7 +324,7 @@ Look also:
 function get_climate_data(settings,mask)
 
     verbosity      = settings["verbosity"]
-    verbose        = verbosity in ["HIGH", "FULL"] 
+    verbose        = verbosity in [HIGH, FULL] 
     
     # Remember that scenario is already embedded in the temp path, but the cache path shares several scenarios
     cl_h_temppath        = joinpath(settings["res"]["fr"]["temp_path"],"clim_historical")

@@ -1,5 +1,7 @@
 
 module Res_fr
+import ..GenFSM
+import ..GenFSM: NONE,LOW,STD,HIGH,FULL
 import ..GenFSM.Res
 
 using DocStringExtensions, Dates
