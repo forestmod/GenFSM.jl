@@ -17,7 +17,7 @@ function get_data!(settings,mask)
     input_rasters["clc"] = get_clc(settings,mask)
     #input_rasters = merge(input_rasters,get_clc(settings,mask))
     @info  "- getting climate (historic or future depending on scenario)..."
-    input_rasters["clim"] = get_climate_data(settings,mask)
+    input_rasters["clim"] = get_climate_data!(settings,mask)
     settings["res"]["fr"]["input_rasters"] = input_rasters
     @info  "- getting inventory data..."
     inv_data = get_inventory_data(settings,mask)
@@ -313,7 +313,7 @@ function get_inventory_data(settings,mask)
 end
 
 """
-   get_climate_data(settings,mask)
+   get_climate_data!(settings,mask)
 
 Download the historical and (eventually) the future climate data
 
@@ -321,7 +321,7 @@ Look also:
 # AGera5 0.1 degrees
 # Agri4Cas: 0.3 degrees
 """
-function get_climate_data(settings,mask)
+function get_climate_data!(settings,mask)
 
     verbosity      = settings["verbosity"]
     verbose        = verbosity in [HIGH, FULL] 
@@ -339,6 +339,8 @@ function get_climate_data(settings,mask)
     vars   =  clim_settings["vars"]
     hyears =  clim_settings["hist_years"]
     fyears =  parse(Int64,clim_settings["fefps"][1:4]):parse(Int64,clim_settings["fefpe"][1:4])
+    fyears =  maximum(hyears)+1:fyears[end]
+    clim_settings["fut_years"] = fyears
     mmonths = [m<10 ? "0$m" : "$m" for m in 1:12]
     tr_fs_h = clim_settings["transformations_h"]
     tr_fs_f = clim_settings["transformations_f"]

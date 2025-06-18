@@ -5,7 +5,7 @@ force_download: []
 # possible values are: (empty, default), "tree_volumes", "ae_climh"
 force_ml_train: []
 # Other processing "force" options
-# possible values are: (empty, default), "ing_points", "prediction_hist_tree_volumes", "xclimh" 
+# possible values are: (empty, default), "ing_points", "prediction_hist_tree_volumes", "xclimh" , "xclimf_reduced"
 force_other: []
 
 

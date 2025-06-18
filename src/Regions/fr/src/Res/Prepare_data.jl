@@ -5,11 +5,13 @@ function prepare_data!(settings, mask)
     # This function prepares the data for the French region.
     # It is called after the data has been downloaded and layers saved as tiff.
     
-    ign_state, ign_growth = prepare_ign_data(settings)
+    ign_state, ign_growth = prepare_ign_data!(settings)
     # the ae_clim and ae_soil models could be used as sort of pretrain and then chained vertically together to form the final growth/mortality model instead of using only the reduced form, but it would takes a lot of computational power in prediction, that is not suitable 
     xclimh_reduced, scaler_clim_m, ae_clim_m  = train_autoencode_clim(settings, mask, ign_growth)
+    xclimf_reduced   = GenFSM.Res_fr.predict_autoencoder_clim(settings, mask, scaler_clim_m, ae_clim_m)
+    scaler_clim_m, ae_clim_m = nothing, nothing # removing the climatic ae models from memory, as they are not needed anymore
     
-    #xsoil_reduced       = train_autoencode_soil(settings, mask)
+    xsoil_reduced       = train_autoencode_soil!(settings, mask)
     #res_growth_m    = train_growth_model(settings, ign_state ign_growth, xclimh_reduced, xsoil_reduced)
     #res_mortality_m = train_mortality_model(settings, ign_state, ign_growth, xclimh_reduced, xsoil_reduced)
     #define_state(settings,mask)
@@ -472,6 +474,70 @@ function train_autoencode_clim(settings, mask, ign_growth)
 
     return (xclimh_reduced,ms,ma)
 end
+
+
+function predict_autoencoder_clim(settings, mask, scaler_clim_m, ae_clim_m)
+
+    settings["verbosity"] >= STD && @info("- predicting autoencoded future climatic data for scenario $(settings["scenario"])")
+
+    force_other    = settings["res"]["fr"]["force_other"]
+    basefolder_h     = joinpath(settings["res"]["fr"]["cache_path"],"clim_historical")
+    basefolder_f     = joinpath(settings["res"]["fr"]["cache_path"],"clim_future",settings["scenario"])
+
+    # if all needed files exists and no "xclim" in force_other, then returning the saved data
+    if (! ("xclimf_reduced" in force_other)) && (isfile(joinpath(basefolder_f,"xclimf_reduced.csv.gz")) )
+        xclimf_reduced = CSV.File(joinpath(basefolder_f,"xclimf_reduced.csv.gz")) |> DataFrames.DataFrame
+        return xclimf_reduced
+    end
+
+    fyears    = settings["res"]["fr"]["data_sources"]["clim"]["fut_years"]
+    ae_nyears = settings["res"]["fr"]["data_sources"]["clim"]["ae_nyears"]
+
+    datafiles_h = settings["res"]["fr"]["input_rasters"]["clim"]["historical"]
+    datafiles_f = settings["res"]["fr"]["input_rasters"]["clim"]["future"]
+    vars      = settings["res"]["fr"]["data_sources"]["clim"]["vars"]
+    verbosity = settings["verbosity"]
+    nC,nR     = size(mask)
+    nxclimf  = nC*nR*(length(fyears))
+    ae_encoded_size = settings["res"]["fr"]["data_sources"]["clim"]["ae_encoded_size"]
+
+    xnames_h   = collect(keys(datafiles_h))
+    xnames_f   = collect(keys(datafiles_f))
+    xrasters_h = OrderedDict{Tuple{String, Int64, Int64},Rasters.Raster}([i => Rasters.Raster(datafiles_h[i]) |> Rasters.replace_missing for i in xnames_h])
+    xrasters_f = OrderedDict{Tuple{String, Int64, Int64},Rasters.Raster}([i => Rasters.Raster(datafiles_f[i]) |> Rasters.replace_missing for i in xnames_f])
+
+    xclimf_reduced   = DataFrames.DataFrame("C"=>Array{Int64}(undef,nxclimf), "R"=>Array{Int64}(undef,nxclimf), "Y"=>Array{Int64}(undef,nxclimf), vec(["x$(i)" => Array{Float64}(undef,nxclimf) for i in 1:ae_encoded_size])...)
+
+    ridx = 1
+    for y in fyears
+    verbosity >= HIGH && @info("    -- creating xclimf_reduced data for year: $y")
+    for c in 1:nC
+        for r in 1:nR
+                cidx = 1
+                clim_data_y_px = Array{Float64,1}(undef,ae_nyears*12*length(vars))
+                for v in vars
+                    for l in (ae_nyears-1):-1:0
+                        for m in 1:12
+                            if (y-l) < fyears[1]
+                            clim_data_y_px[cidx] = xrasters_h[(v,m,y-l)][c,r]
+                            else
+                            clim_data_y_px[cidx] = xrasters_f[(v,m,y-l)][c,r]
+                            end
+                            cidx +=1
+                        end
+                    end
+                end
+                # ae predict 240 -> 6
+                clim_data_red   =  @pipe clim_data_y_px|> transpose |>  BetaML.predict(scaler_clim_m, _) |> BetaML.predict(ae_clim_m, _) |> vec
+                xclimf_reduced[ridx,:] .= vcat([c,r,y],clim_data_red)
+                ridx +=1
+        end
+        end
+    end
+    CSV.write(joinpath(basefolder_f,"xclimf_reduced.csv.gz"),xclimf_reduced;compress=true)
+    return xclimf_reduced
+end
+
 
 function train_growth_model(settings, ign_growth, ae_clim_m, ae_soil_m)
     # This function trains the growth model using the IGN growth data and the autoencoded climatic and soil data
