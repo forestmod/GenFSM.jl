@@ -5,7 +5,7 @@ force_download: []
 # possible values are: (empty, default), "tree_volumes", "ae_climh"
 force_ml_train: []
 # Other processing "force" options
-# possible values are: (empty, default), "ing_points", "prediction_hist_tree_volumes", "xclimh" , "xclimf_reduced"
+# possible values are: (empty, default), "ing_points", "prediction_hist_tree_volumes", "xclimh" , "xclimf_reduced", "xfixedpx_reduced"
 force_other: []
 
 
@@ -69,6 +69,13 @@ data_sources:
     ae_base_nepochs: 10
     ae_max_ntrains: 100
     ae_hidden_layer_size: 600
+    ae_encoded_size: 6
+
+px_fixed_data:
+    ae_nsample: 100000
+    ae_base_nepochs: 10
+    ae_max_ntrains: 100
+    ae_hidden_layer_size: 300
     ae_encoded_size: 6
 
 ign_data:

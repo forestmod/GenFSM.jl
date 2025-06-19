@@ -10,8 +10,12 @@ function prepare_data!(settings, mask)
     xclimh_reduced, scaler_clim_m, ae_clim_m  = train_autoencode_clim(settings, mask, ign_growth)
     xclimf_reduced   = GenFSM.Res_fr.predict_autoencoder_clim(settings, mask, scaler_clim_m, ae_clim_m)
     scaler_clim_m, ae_clim_m = nothing, nothing # removing the climatic ae models from memory, as they are not needed anymore
+    # Filtering out x,y that are not in the mask (yes, it could have been done earlier..)
+    xclimh_reduced = xclimh_reduced[getindex.(Ref(mask),xclimh_reduced.C,xclimh_reduced.R) .== 1,:]
+    xclimf_reduced = xclimf_reduced[getindex.(Ref(mask),xclimf_reduced.C,xclimf_reduced.R) .== 1,:]
     
-    xsoil_reduced       = train_autoencode_soil!(settings, mask)
+    xfixedpx_reduced       = trainpredict_autoencode_fixedpxdata(settings, mask) # dtm and soil
+
     #res_growth_m    = train_growth_model(settings, ign_state ign_growth, xclimh_reduced, xsoil_reduced)
     #res_mortality_m = train_mortality_model(settings, ign_state, ign_growth, xclimh_reduced, xsoil_reduced)
     #define_state(settings,mask)
@@ -537,6 +541,146 @@ function predict_autoencoder_clim(settings, mask, scaler_clim_m, ae_clim_m)
     CSV.write(joinpath(basefolder_f,"xclimf_reduced.csv.gz"),xclimf_reduced;compress=true)
     return xclimf_reduced
 end
+
+
+function trainpredict_autoencode_fixedpxdata(settings, mask)
+    # Note: we put together here both soil and elevation data.. perhaps it is better to separate them, as dtm is not really a soil variable, but rather a topographic variable, and the ae doesn't work supergood with it.
+    verbosity = settings["verbosity"]
+    verbosity >= GenFSM.STD && @info("- autoencoding px fixed data")
+
+    force_other    = settings["res"]["fr"]["force_other"]
+    basefolder     = joinpath(settings["res"]["fr"]["cache_path"])
+
+    # if all needed files exists and no "xclim" in force_other, then returning the saved data
+    if (! ("xfixedpx_reduced" in force_other)) && isfile(joinpath(basefolder,"xfixedpx_reduced.csv.gz"))
+        xfixedpx_reduced = CSV.File(joinpath(basefolder,"xfixedpx_reduced.csv.gz")) |> DataFrames.DataFrame
+        return xfixedpx_reduced
+    end
+
+    datafiles_dtm = settings["res"]["fr"]["input_rasters"]["dtm"]
+    datafiles_soil = settings["res"]["fr"]["input_rasters"]["soil"]
+    datafiles = merge(datafiles_dtm, datafiles_soil)
+    ae_nsample = settings["res"]["fr"]["px_fixed_data"]["ae_nsample"]
+    ae_base_nepochs = settings["res"]["fr"]["px_fixed_data"]["ae_base_nepochs"]
+    ae_max_ntrains  = settings["res"]["fr"]["px_fixed_data"]["ae_max_ntrains"]
+    ae_hidden_layer_size = settings["res"]["fr"]["px_fixed_data"]["ae_hidden_layer_size"]
+    ae_encoded_size = settings["res"]["fr"]["px_fixed_data"]["ae_encoded_size"]
+    xnames    = collect(keys(datafiles))
+    n_xnames  = length(xnames)
+    nC,nR = size(mask)
+    nx    = sum(mask)
+    nd_dtm  = length(keys(datafiles_dtm))
+    nd_soil = length(keys(datafiles_soil))
+
+    verbosity >= GenFSM.STD && @info(" -- creating xclimh df from raster files")
+
+    xrasters = OrderedDict{String,Rasters.Raster}([i => Rasters.Raster(datafiles[i]) |> Rasters.replace_missing for i in xnames])
+    # by time (month, year) var name
+    xfixedpx   = DataFrames.DataFrame("C"=>Array{Int64}(undef,nx), "R"=>Array{Int64}(undef,nx), vec(["$(var)" => Array{Float64}(undef,nx) for var in xnames])...)
+
+    # Reformatting the data in a large matrix (records [pixels] x variables)
+    ridx = 1
+    (n_problematic_px, n_very_problematic_px) = (0,0)
+    for c in 1:nC
+    verbosity > GenFSM.HIGH && @info("    -- creating xfixedpx  data for column: $c")
+    for r in 1:nR
+        mask[c,r] == 1 || continue # skip pixels outside the mask
+        xfixedpx[ridx,[1,2]] .= [c,r]
+        cidx = 3
+        for v in xnames
+        if(ismissing(xrasters[v][c,r]))
+            # This happens in a few pixels at the border of the mask. Assigning the average of the variable in the neighmour pixels
+            vals = Float64[]
+            for c2 in max(1,c-2):min(nC,c+2)
+            for r2 in max(1,r-2):min(nR,r+2)
+                if(mask[c2,r2] == 1 && !ismissing(xrasters[v][c2,r2]))
+                push!(vals,xrasters[v][c2,r2])
+                end
+            end
+            end
+            if(length(vals) > 0)
+            n_problematic_px += 1
+            xfixedpx[ridx,cidx] = StatsBase.mean(vals)
+            else
+            n_very_problematic_px += 1
+            xfixedpx[ridx,cidx] = StatsBase.mean(skipmissing(xrasters[v]))
+            verbosity >= GenFSM.HIGH && @warn("Missing value for variable `$(v)` at pixel $(c),$(r). No neighbour pixels found to calculate the average. using the mean of all pixels: $(xfixedpx[ridx,cidx])")
+            end
+        else
+            #println("(v,c,r): $(v), $c, $r  - $(xrasters[v][c,r])")
+            xfixedpx[ridx,cidx] = xrasters[v][c,r]
+        end
+        cidx +=1
+        end
+        ridx +=1
+    end
+    end
+
+    verbosity >= GenFSM.HIGH && @info("    -- finished creating xfixedpx data. Number of pixels with missing values: $(n_problematic_px), number of pixels with no neighbour pixels: $(n_very_problematic_px)")
+
+    srows = StatsBase.sample(axes(xfixedpx, 1), ae_nsample,replace = false)
+    sx    = view(xfixedpx, srows, :)
+    datax = Matrix(sx[:,3:end])
+    nd = size(datax,2)
+    ((xtrain,xval),) = BetaML.partition([datax],[0.8,0.2])
+
+    ms    = BetaML.Scaler(cache=false,skip=nd-12:nd) # skip to scale the categorical TextureUSDA category cols
+
+    BetaML.fit!(ms,xtrain)
+    xtrains  = BetaML.predict(ms,xtrain)
+
+    ma    = BetaML.AutoEncoder(encoded_size=ae_encoded_size,layers_size=ae_hidden_layer_size,epochs=ae_base_nepochs,verbosity=BetaML.LOW, cache=false)
+
+    last_mse_val = Inf
+    xpxfixed_reduced = nothing
+
+    for n in 1:ae_max_ntrains
+        verbosity >= GenFSM.STD && @info("  -- training passage: $n")
+        previous_model = deepcopy(ma)
+        BetaML.fit!(ma,xtrains)
+        xtrainr  = BetaML.predict(ma,xtrains)
+        x̂trains  = BetaML.inverse_predict(ma,xtrainr)
+        x̂train   = BetaML.inverse_predict(ms,x̂trains)
+        mses_train  = [BetaML.mse(xtrain[:,i],x̂train[:,i]) for i in axes(xtrain,2)]
+        #means_train = mean(xtrain,dims=1)'
+        xvals    = BetaML.predict(ms,xval)
+        xvalsr   = BetaML.predict(ma,xvals)
+        x̂vals    = BetaML.inverse_predict(ma,xvalsr)
+        x̂val     = BetaML.inverse_predict(ms,x̂vals)
+        mses_val = [BetaML.mse(xval[:,i],x̂val[:,i]) for i in axes(xval,2)]
+        #means_val = mean(xval,dims=1)'
+        mse_train_overall = StatsBase.mean(mses_train)
+        mse_val_overall   = StatsBase.mean(mses_val)
+        verbosity >= GenFSM.STD && @info "  -- $(n): mse_train: $(mse_train_overall)"
+        verbosity >= GenFSM.STD && @info "  -- $(n): mse_val: $(mse_val_overall)"
+        if mse_val_overall > last_mse_val
+            verbosity >= GenFSM.STD && @info "- DONE ae pxfixed model training."
+            verbosity > GenFSM.STD && @info  "  -- detailed mse_train: $(mses_train')"
+            verbosity > GenFSM.STD && @info  "  -- detailed mse_val: $(mses_val')"
+            ma = previous_model
+            #BetaML.model_save(joinpath(basefolder,"ae_clim_m.jld2");ma)
+            break
+        else
+            verbosity >= GenFSM.STD && @info "Further training needed..."
+            last_mse_val = mse_val_overall
+            if n == ae_max_ntrains
+                verbosity >= GenFSM.LOW && @warn "Maximum number of training iterations reached, validation still descending. Saving the AE model, but consider further training."
+                #BetaML.model_save(joinpath(basefolder,"ae_clim_m.jld2");ma)
+            end
+        end
+    end
+
+    xtot = BetaML.predict(ms,Matrix(xfixedpx[:,3:end]))
+    xtot_reduced = BetaML.predict(ma,xtot)
+    xfixedpx_reduced= hcat(xfixedpx[:,1:2],DataFrames.DataFrame(xtot_reduced,:auto))
+    CSV.write(joinpath(basefolder,"xfixedpx_reduced.csv.gz"),xclimh_reduced;compress=true)
+    BetaML.model_save(joinpath(basefolder,"ms_xfixedpx.jld2");ms)
+    BetaML.model_save(joinpath(basefolder,"ma_xfixedpx.jld2");ma)
+
+    return xfixedpx_reduced
+
+end
+
 
 
 function train_growth_model(settings, ign_growth, ae_clim_m, ae_soil_m)
