@@ -9,6 +9,7 @@ using DocStringExtensions, Dates
 import Downloads 
 import StatsBase
 import Pipe: @pipe
+import HTTP
 import ArchGDAL, Rasters, ZipFile, DataStructures # , FTPClient
 import Geomorphometry # for slope and aspect 
 import Shapefile

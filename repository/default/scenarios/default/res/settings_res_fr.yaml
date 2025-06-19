@@ -1,5 +1,5 @@
 # A vector with the information of what data to force download
-# possible values are: (empty, default), "dtm", "soil", "adm_borders", "clc", "forinv"
+# possible values are: (empty, default), "dtm", "soil", "adm_borders", "clc", "forinv", "clim_h", "clim_f", "co2_conc_h", "co2_conc_f"
 force_download: []
 # A vector with the information of which parts of ML workflow to force retrain
 # possible values are: (empty, default), "tree_volumes", "ae_climh"
@@ -54,6 +54,7 @@ data_sources:
     activity_id: "ScenarioMIP" 
     table_id:      "Amon"
     fixed_climate: true 
+    # Standard ssp scenarios: 126, 245, 370 and 585. See https://www.dkrz.de/en/communication/climate-simulations/cmip6-en/the-ssp-scenarios
     experiment_id: "ssp126"
     experiment_id_extreme: "ssp585"
     institution_id: "MPI-M" 
@@ -70,6 +71,14 @@ data_sources:
     ae_max_ntrains: 100
     ae_hidden_layer_size: 600
     ae_encoded_size: 6
+  
+  # See also:
+  # - https://greenhousegases.science.unimelb.edu.au/#!/view
+  # - https://gmd.copernicus.org/articles/13/3571/2020/
+  # - https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.txt
+  co2_conc_url: "https://raw.githubusercontent.com/SantanderMetGroup/wrf-ghg-files/refs/heads/master/CAMtr_volume_mixing_ratio.${SSP_SCENARIO}"
+
+
 
 px_fixed_data:
     ae_nsample: 100000

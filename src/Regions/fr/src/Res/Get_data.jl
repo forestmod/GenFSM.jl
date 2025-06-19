@@ -19,6 +19,10 @@ function get_data!(settings,mask)
     @info  "- getting climate (historic or future depending on scenario)..."
     input_rasters["clim"] = get_climate_data!(settings,mask)
     settings["res"]["fr"]["input_rasters"] = input_rasters
+    @info  "- getting CO2 atmospheric concentration (historic or future depending on scenario)..."
+    co2_conc_h, co2_conc_f = get_co2_concentration(settings,mask)
+    settings["res"]["fr"]["co2_conc_h"] = co2_conc_h; settings["res"]["fr"]["co2_conc_f"] = co2_conc_f
+
     @info  "- getting inventory data..."
     inv_data = get_inventory_data(settings,mask)
     settings["res"]["fr"]["inv_data"] = inv_data
@@ -266,53 +270,6 @@ function get_clc(settings,mask)
 end
 
 """
-   get_inventory_data(settings,mask)
-
-Download the forest inventory data and change the (X,Y) coordinated of the points to the CRS used in the model.
-Returns a dicionary with the file paths (no further elaborated, still in csv format)   
-"""
-function get_inventory_data(settings,mask)
-    forinv_url       = settings["res"]["fr"]["data_sources"]["forest_inventory_url"]
-    force            = "forinv" in settings["res"]["fr"]["force_download"]
-    forest_inventory_crs = settings["res"]["fr"]["data_sources"]["forest_inventory_cres_epsg_id"]
-    forinv_dirpath   = joinpath(settings["res"]["fr"]["cache_path"],"forinv")
-    forinv_dldirpath = joinpath(settings["res"]["fr"]["temp_path"],"forinv")
-    forinv_dlpath    = joinpath(forinv_dldirpath,basename(forinv_url))
-    forinv_unzippeddir = joinpath(forinv_dldirpath,"data")
-    forinv_data = Dict(
-        "points"          =>  joinpath(forinv_dirpath,"PLACETTE.csv"),
-        "trees"           =>  joinpath(forinv_dirpath,"ARBRE.csv"),
-        "death_trees"     =>  joinpath(forinv_dirpath,"BOIS_MORT.csv"),
-        "tree_cover"      =>  joinpath(forinv_dirpath,"COUVERT.csv"),
-        "points_toposoil" =>  joinpath(forinv_dirpath,"ECOLOGIE.csv"),
-        "species"         =>  joinpath(forinv_dirpath,"FLORE.csv"),
-        "habitat"         =>  joinpath(forinv_dirpath,"HABITAT.csv"),
-    )
-    forinv_meta = Dict(
-        "species_latin_name"        => joinpath(forinv_dirpath,"espar-cdref13.csv"),
-        "vars_availability_by_year" => joinpath(forinv_dirpath,"summary_data.csv"), # recapitulatif_donnees.csv is the French version
-        "metadata"                  => joinpath(forinv_dirpath,"metadata.csv"), # metadonnees.csv is the French version    
-    )
-    forinv_vars = Dict("data" => forinv_data, "meta"=>forinv_meta)
-    (isdir(forinv_dirpath) && (!force) ) && return forinv_vars
-    isdir(forinv_dirpath) || mkpath(forinv_dirpath)
-    isdir(forinv_dldirpath) || mkpath(forinv_dldirpath)
-    Downloads.download(forinv_url,forinv_dlpath)
-    unzip(forinv_dlpath,forinv_unzippeddir)
-    mv(forinv_unzippeddir,forinv_dirpath,force=true)
-    points = CSV.read(forinv_data["points"],DataFrames.DataFrame)
-    trans = Proj.Transformation("EPSG:$(forest_inventory_crs)", "EPSG:$(settings["simulation_region"]["cres_epsg_id"])", always_xy=true)   
-    for p in eachrow(points)
-      (X,Y) = trans(p.XL,p.YL)
-      p.XL = X
-      p.YL = Y
-    end
-    CSV.write(forinv_data["points"],points)
-    rm(forinv_dldirpath,recursive=true)
-    return forinv_vars
-end
-
-"""
    get_climate_data!(settings,mask)
 
 Download the historical and (eventually) the future climate data
@@ -340,7 +297,7 @@ function get_climate_data!(settings,mask)
     hyears =  clim_settings["hist_years"]
     fyears =  parse(Int64,clim_settings["fefps"][1:4]):parse(Int64,clim_settings["fefpe"][1:4])
     fyears =  maximum(hyears)+1:fyears[end]
-    clim_settings["fut_years"] = fyears
+    settings["res"]["fr"]["data_sources"]["clim"]["fut_years"] = fyears # updating the settings with the future years
     mmonths = [m<10 ? "0$m" : "$m" for m in 1:12]
     tr_fs_h = clim_settings["transformations_h"]
     tr_fs_f = clim_settings["transformations_f"]
@@ -511,4 +468,100 @@ chelsa_cmip6(
 
 end
 
+"""
+   get_co2_concentration(settings,mask)
 
+Download and retrieve the yearly average CO2 concentration in the atmosphere, historical and scenario-dependant future one.
+"""
+function get_co2_concentration(settings,mask)
+
+    verbosity      = settings["verbosity"]
+    verbose        = verbosity in [GenFSM.HIGH, GenFSM.FULL] 
+
+    # Remember that scenario is already embedded in the temp path, but the cache path shares several scenarios
+    co2_h_destfolder = joinpath(settings["res"]["fr"]["cache_path"],"co2_historical")
+    co2_f_destfolder = joinpath(settings["res"]["fr"]["cache_path"],"co2_future",settings["scenario"])
+    isdir(co2_h_destfolder) || mkpath(co2_h_destfolder)
+    isdir(co2_f_destfolder) || mkpath(co2_f_destfolder)
+    co2_h_destpath       = joinpath(co2_h_destfolder,"co2_conc.csv")
+    co2_f_destpath       = joinpath(co2_f_destfolder,"co2_conc.csv")
+    clim_settings = settings["res"]["fr"]["data_sources"]["clim"]
+    force_h  = "co2_conc_h" in settings["res"]["fr"]["force_download"]
+    force_f  = "co2_conc_f" in settings["res"]["fr"]["force_download"]  
+    freeze =  clim_settings["fixed_climate"] # boolean
+    hyears =  clim_settings["hist_years"]
+    fyears =  clim_settings["fut_years"] # added in get_climate_data!
+
+    if !force_h && !force_f && ispath(co2_h_destpath) && ispath(co2_f_destpath)
+        return (co2_h_destpath, co2_f_destpath)
+    end
+
+    # ok, we need to do somehting, let's download the file and get the data
+    co2_conc_url = settings["res"]["fr"]["data_sources"]["co2_conc_url"]
+    co2_conc_url = replace(co2_conc_url,"\${SSP_SCENARIO}" => uppercase(clim_settings["experiment_id"]))  # eg. "ssp585" or "ssp126
+
+    data = @pipe HTTP.get(co2_conc_url).body |>
+        CSV.File(_,delim=' ',header=false, ignorerepeated=true, skipto=3) |> DataFrames.DataFrame
+    co2_h = data[in.(data[:,1],Ref(hyears)),2]
+    if freeze
+        co2_f = fill(co2_h[end], length(fyears))
+    else
+        co2_f = data[in.(data[:,1],Ref(fyears)),2]
+    end
+
+    if force_h || ! ispath(co2_h_destpath) 
+    CSV.write(co2_h_destpath, DataFrames.DataFrame(years=hyears,co2_conc=co2_h))
+    end
+    if force_f || ! ispath(co2_f_destpath) 
+    CSV.write(co2_f_destpath, DataFrames.DataFrame(years=fyears,co2_conc=co2_f))
+    end
+    return (co2_h_destpath, co2_f_destpath)
+end
+
+
+"""
+   get_inventory_data(settings,mask)
+
+Download the forest inventory data and change the (X,Y) coordinated of the points to the CRS used in the model.
+Returns a dicionary with the file paths (no further elaborated, still in csv format)   
+"""
+function get_inventory_data(settings,mask)
+    forinv_url       = settings["res"]["fr"]["data_sources"]["forest_inventory_url"]
+    force            = "forinv" in settings["res"]["fr"]["force_download"]
+    forest_inventory_crs = settings["res"]["fr"]["data_sources"]["forest_inventory_cres_epsg_id"]
+    forinv_dirpath   = joinpath(settings["res"]["fr"]["cache_path"],"forinv")
+    forinv_dldirpath = joinpath(settings["res"]["fr"]["temp_path"],"forinv")
+    forinv_dlpath    = joinpath(forinv_dldirpath,basename(forinv_url))
+    forinv_unzippeddir = joinpath(forinv_dldirpath,"data")
+    forinv_data = Dict(
+        "points"          =>  joinpath(forinv_dirpath,"PLACETTE.csv"),
+        "trees"           =>  joinpath(forinv_dirpath,"ARBRE.csv"),
+        "death_trees"     =>  joinpath(forinv_dirpath,"BOIS_MORT.csv"),
+        "tree_cover"      =>  joinpath(forinv_dirpath,"COUVERT.csv"),
+        "points_toposoil" =>  joinpath(forinv_dirpath,"ECOLOGIE.csv"),
+        "species"         =>  joinpath(forinv_dirpath,"FLORE.csv"),
+        "habitat"         =>  joinpath(forinv_dirpath,"HABITAT.csv"),
+    )
+    forinv_meta = Dict(
+        "species_latin_name"        => joinpath(forinv_dirpath,"espar-cdref13.csv"),
+        "vars_availability_by_year" => joinpath(forinv_dirpath,"summary_data.csv"), # recapitulatif_donnees.csv is the French version
+        "metadata"                  => joinpath(forinv_dirpath,"metadata.csv"), # metadonnees.csv is the French version    
+    )
+    forinv_vars = Dict("data" => forinv_data, "meta"=>forinv_meta)
+    (isdir(forinv_dirpath) && (!force) ) && return forinv_vars
+    isdir(forinv_dirpath) || mkpath(forinv_dirpath)
+    isdir(forinv_dldirpath) || mkpath(forinv_dldirpath)
+    Downloads.download(forinv_url,forinv_dlpath)
+    unzip(forinv_dlpath,forinv_unzippeddir)
+    mv(forinv_unzippeddir,forinv_dirpath,force=true)
+    points = CSV.read(forinv_data["points"],DataFrames.DataFrame)
+    trans = Proj.Transformation("EPSG:$(forest_inventory_crs)", "EPSG:$(settings["simulation_region"]["cres_epsg_id"])", always_xy=true)   
+    for p in eachrow(points)
+      (X,Y) = trans(p.XL,p.YL)
+      p.XL = X
+      p.YL = Y
+    end
+    CSV.write(forinv_data["points"],points)
+    rm(forinv_dldirpath,recursive=true)
+    return forinv_vars
+end
