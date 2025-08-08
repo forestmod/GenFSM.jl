@@ -8,6 +8,7 @@ using DocStringExtensions, Dates
 
 import Downloads 
 import StatsBase
+import DataStructures: OrderedDict
 import Pipe: @pipe
 import HTTP
 import ArchGDAL, Rasters, ZipFile, DataStructures # , FTPClient

@@ -2,7 +2,7 @@
 # possible values are: (empty, default), "dtm", "soil", "adm_borders", "clc", "forinv", "clim_h", "clim_f", "co2_conc_h", "co2_conc_f"
 force_download: []
 # A vector with the information of which parts of ML workflow to force retrain
-# possible values are: (empty, default), "tree_volumes", "ae_climh"
+# possible values are: (empty, default), "tree_volumes", "ae_climh", "growth"
 force_ml_train: []
 # Other processing "force" options
 # possible values are: (empty, default), "ing_points", "prediction_hist_tree_volumes", "xclimh" , "xclimf_reduced", "xfixedpx_reduced"
@@ -92,3 +92,4 @@ ign_data:
   genders_coniferous: ["Abies", "Casuarina", "Cedrus", "Chamaecyparis", "Cryptomeria", "Cupressus", "Juglans", "Juniperus", "Larix", "Picea", "Pinus", "Pseudotsuga", "Pyrus", "Sequoia", "Sequoiadendron", "Taxodium", "Taxus", "Thuja", "Tsuga"]
   nsample_v_imputation: 1000
   
+ftypes: ["br_HF", "br_COP", "br_MIX", "mixsp_HF", "mixsp_MIX", "con_HF"]

@@ -21,7 +21,7 @@ years:
   start: 2024
   step:  1
   end:   2100 
-verbosity:  FULL # NONE, LOW, STD, HIGH, FULL. Here it is a string but this is converted to a enum (integer) in ScenarioLoader.load_full_settings.
+verbosity:  HIGH # NONE, LOW, STD, HIGH, FULL. Here it is a string but this is converted to a enum (integer) in ScenarioLoader.load_full_settings.
   
 
 # Output paths:

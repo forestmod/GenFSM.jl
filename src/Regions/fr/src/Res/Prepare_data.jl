@@ -1,11 +1,11 @@
 # Prepare the data for the French Rres_fr module.
 
 function prepare_data!(settings, mask)
-    settings["verbosity"] >= LOW && @info("Preparing res data for the French region.")
+    settings["verbosity"] >= GenFSM.LOW && @info("Preparing res data for the French region.")
     # This function prepares the data for the French region.
     # It is called after the data has been downloaded and layers saved as tiff.
     
-    ign_state, ign_growth = prepare_ign_data!(settings)
+    ign_state, ign_growth = prepare_ign_data(settings, mask)
     # the ae_clim and ae_soil models could be used as sort of pretrain and then chained vertically together to form the final growth/mortality model instead of using only the reduced form, but it would takes a lot of computational power in prediction, that is not suitable 
     xclimh_reduced, scaler_clim_m, ae_clim_m  = train_autoencode_clim(settings, mask, ign_growth)
     xclimf_reduced   = GenFSM.Res_fr.predict_autoencoder_clim(settings, mask, scaler_clim_m, ae_clim_m)
@@ -13,11 +13,10 @@ function prepare_data!(settings, mask)
     # Filtering out x,y that are not in the mask (yes, it could have been done earlier..)
     xclimh_reduced = xclimh_reduced[getindex.(Ref(mask),xclimh_reduced.C,xclimh_reduced.R) .== 1,:]
     xclimf_reduced = xclimf_reduced[getindex.(Ref(mask),xclimf_reduced.C,xclimf_reduced.R) .== 1,:]
-    
     xfixedpx_reduced       = trainpredict_autoencode_fixedpxdata(settings, mask) # dtm and soil
 
-    #res_growth_m    = train_growth_model(settings, ign_state ign_growth, xclimh_reduced, xsoil_reduced)
-    #res_mortality_m = train_mortality_model(settings, ign_state, ign_growth, xclimh_reduced, xsoil_reduced)
+    res_growth_m    = train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduced)
+    #res_mortality_m = train_mortality_model(settings, ign_state, ign_growth, xclimh_reduced, xfixedpx_reduced)
     #define_state(settings,mask)
     # xclimf_reduced                  = predict_autoencoder_clim(settings, mask, scaler_clim_m, ae_clim_m)
     settings["verbosity"] >= STD && @info("DONE preparing data for French region.")
@@ -40,6 +39,8 @@ filtered by:
 idp: id point
 x: x coord
 y: y coord
+xid: x index in the mask
+yid: y index in the mask
 y1: year of the first visit
 y2: year of the second visit
 vHa1: volume per hectare (alive) at the first visit
@@ -60,21 +61,27 @@ filtered by:
 idp: id point
 x: x coord
 y: y coord
-y: year
+xid: x index in the mask
+yid: y index in the mask
+year: year
 vHa: volume per hectare
 d: avg diameter
 spg: species group BR,MIX,CON
 gov: government HF,MIX,COP
 
 """
-function prepare_ign_data(settings)
+function prepare_ign_data(settings, mask )
+ 
+    verbosity = settings["verbosity"]
 
     # This function prepares the IGN data for the French region
-    settings["verbosity"] >= STD && @info("- preparing IGN data for growth/mortality model training and set initial forest resource condition")
+    verbosity  >= GenFSM.STD && @info("- preparing IGN data for growth/mortality model training and set initial forest resource condition")
 
     force_other = settings["res"]["fr"]["force_other"]
     force_ml_train = settings["res"]["fr"]["force_ml_train"]
     basefolder  = joinpath(settings["res"]["fr"]["cache_path"],"forinv")
+    hyears    = settings["res"]["fr"]["data_sources"]["clim"]["hist_years"]
+    ftypes    = settings["res"]["fr"]["ftypes"]
 
     # if dfgrowth exists and no "ing_points""in force_other, then returning the saved dfgrowth, dfstate
     if (! ("ing_points" in force_other)) && (isfile(joinpath(basefolder,"dfgrowth.csv")) && isfile(joinpath(basefolder,"dfstate.csv"))  )
@@ -94,12 +101,22 @@ function prepare_ign_data(settings)
     species.group  = [(gender in genders_broadleaves) ? "br" : ((gender in genders_coniferous) ? "con" : missing ) for gender in species.gender] 
     species.spcode = [length(espar) == 1 ? "0$espar" : espar for espar in species[:,"// espar"]] # correction because the use stuff like "2" in the classification, but "02" in the data... arghhh
 
+    tpobs.D = tpobs.C13 ./ pi
+    # Form factors
+    tpobs.SQFF = tpobs.V ./ tpobs.D .^ 2
+    tpobs.CUBFF = tpobs.V ./ tpobs.D .^ 3
+    # Vegetation state
+    tpobs.VSTATE = [ismissing(t.VEGET5) ? t.VEGET : t.VEGET5  for t in eachrow(tpobs)] 
+
+    # Species group
     map_espar = Dict(species.spcode .=> species.group)
-    # MAnually add codes that are not in the species list....
+    # Manually add codes that are not in the species list....
     map_espar["332G"] = "br"  # populus
     map_espar["29AF"] = "br"  # other broadleaves
     map_espar["68CE"] = "con" # other coniferous 
     map_espar["25E3"] = "br"  # some salix
+    map_espar["25E5"] = "br"  # some salix
+    tpobs.SPGR = [ismissing(t.ESPAR) ? missing : map_espar[t.ESPAR] for t in eachrow(tpobs)]
 
     pids  = unique(pobs.IDP)
     years = unique(pobs.CAMPAGNE)
@@ -108,54 +125,94 @@ function prepare_ign_data(settings)
     map_structure_sver  = Dict("0" => "", "X" => "", "2" => "HF", "3" => "COP", "4" => "", "5" => "MIX", "6" => "HF") # skipping no structure/cutted (0,X) and irregular HF (4)
     map_recent_cuts = Dict(0 => false, 1 => true, 2 => true)
 
-    function vHaContribution(v,c13)
-        (ismissing(v) || ismissing(c13)) && return missing
+    Xdim = Rasters.dims(mask, Rasters.X)    # a DimensionalData.Sampled{<:Real} or similar
+    Ydim = Rasters.dims(mask, Rasters.Y)  
+    xcoords = collect(Xdim)
+    ycoords = collect(Ydim)
+    y_l = length(ycoords)
+    y_rev = reverse(ycoords)
+
+    function computeW(c13)
+        ismissing(c13) && return missing
         if c13 < 0.705
-            return v/(6^2*pi/(100*100))
+            return 10000/(6^2*pi)
         elseif c13 < 1.175
-            return v/(9^2*pi/(100*100))
+            return 10000/(9^2*pi)
         else 
-            return v/(15^2*pi/(100*100))
+            return 10000/(15^2*pi)
         end
-    end
-    train_fields = ["ESPAR","CAMPAGNE","SER","C13","HTOT","V"]
-    v_cidx   = findfirst(==("V"), train_fields)
-    
-    if !("tree_volumes" in force_ml_train) && (isfile(joinpath(basefolder,"tree_imputer_model.jd")))
-        tree_imputer_model = BetaML.model_load(joinpath(basefolder,"tree_imputer_model.jd"),"tree_imputer_model")
-    else
-        # Option 1: do the imputation and save the model...
-        @info("Training individual trees imputation model...")
+    end    
 
-        train_tpobs = DataFrames.dropmissing(tpobs[:,train_fields])
-        (N,D) = size(train_tpobs)
-        Nsample = nsample_v_imputation
-        sids = StatsBase.sample(axes(train_tpobs, 1), Nsample; replace = false, ordered = false)
-        training_tpobs = view(train_tpobs, sids, train_fields)
-        tree_imputer_model = BetaML.RandomForestEstimator(verbosity=BetaML.FULL,cache=false, n_trees=50, oob=true)
 
-        BetaML.fit!(tree_imputer_model, Matrix(training_tpobs[:,1:end-1]), training_tpobs[:,end])
-        # saving model
-        BetaML.model_save(joinpath(basefolder,"tree_imputer_model.jd");tree_imputer_model=tree_imputer_model)
-        @info("...done individual trees imputation model")
-        @info(BetaML.info(tree_imputer_model))
+
+    # Computing "generic" and sqare and cubic form factors for trees that doesn't have an entry on the first visit, by (1) species, department and diameter class, (2) species and diameter class, (3) species only
+    dclasses = [0:10:130;100000]
+    tpobs.DC = [ismissing(d) ? missing : (findfirst(x -> x >= d*100, dclasses) -1) for d in tpobs.D]
+
+    ff_sp_dep_dc =DataFrames.combine(DataFrames.groupby(tpobs, [:ESPAR,:SER,:DC,])) do subdf
+        # subdf is a DataFrame with the same columns as tpobs
+        # we compute the mean of V for each group
+        size(subdf,1) == 0 && return (n = 0, sqff = missing, cubff = missing)
+        all(ismissing.(subdf.V)) && return (n=0, sqff = missing, cubff = missing)
+        (n = size(subdf,1), sqff  = StatsBase.median(skipmissing(subdf.SQFF)),
+        cubff = StatsBase.mean(skipmissing(subdf.CUBFF)))
+    end
+    ff_sp_dep_dc =  GenFSM.to_dict(ff_sp_dep_dc, [:ESPAR,:SER,:DC], [:n,:sqff,:cubff])
+
+    ff_sp_dc =DataFrames.combine(DataFrames.groupby(tpobs, [:ESPAR,:DC,])) do subdf
+        # subdf is a DataFrame with the same columns as tpobs
+        # we compute the mean of V for each group
+        size(subdf,1) == 0 && return (n = 0, sqff = missing, cubff = missing)
+        all(ismissing.(subdf.V)) && return (n=0, sqff = missing, cubff = missing)
+        (n = size(subdf,1), sqff  = StatsBase.median(skipmissing(subdf.SQFF)),
+        cubff = StatsBase.mean(skipmissing(subdf.CUBFF)))
+    end
+    ff_sp_dc =  GenFSM.to_dict(ff_sp_dc, [:ESPAR,:DC], [:n,:sqff,:cubff])
+
+    ff_sp =DataFrames.combine(DataFrames.groupby(tpobs, [:ESPAR])) do subdf
+        # subdf is a DataFrame with the same columns as tpobs
+        # we compute the mean of V for each group
+        size(subdf,1) == 0 && return (n = 0, sqff = missing, cubff = missing)
+        all(ismissing.(subdf.V)) && return (n=0, sqff = missing, cubff = missing)
+        (n = size(subdf,1), sqff  = StatsBase.median(skipmissing(subdf.SQFF)),
+        cubff = StatsBase.mean(skipmissing(subdf.CUBFF)))
+    end
+    ff_sp =  GenFSM.to_dict(ff_sp, [:ESPAR], [:n,:sqff,:cubff])
+
+
+    ff_dep_dc =DataFrames.combine(DataFrames.groupby(tpobs, [:SER,:DC,])) do subdf
+        # subdf is a DataFrame with the same columns as tpobs
+        # we compute the mean of V for each group
+        size(subdf,1) == 0 && return (n = 0, sqff = missing, cubff = missing)
+        all(ismissing.(subdf.V)) && return (n=0, sqff = missing, cubff = missing)
+        (n = size(subdf,1), sqff  = StatsBase.mean(skipmissing(subdf.SQFF)),
+        cubff = StatsBase.mean(skipmissing(subdf.CUBFF)))
+    end
+    ff_dep_dc =  GenFSM.to_dict(ff_dep_dc, [:SER,:DC], [:n,:sqff,:cubff])
+
+    missingcheck(res) = ismissing(res) || ismissing(res[2])
+
+    function get_generic_ff(sp,dep,dc)
+        # returns the generic form factor for a given species, department and diameter class
+        # if not found, returns missing
+        (n,sqff,cubff) = (0,0.0,0.0)
+        if ismissing(sp) 
+            (n,sqff,cubff) = (ismissing(get(ff_dep_dc,(dep,dc),missing) )) ? (missing,missing,missing) : get(ff_dep_dc,(dep,dc),missing)
+        elseif ! missingcheck(get(ff_sp_dep_dc,(sp, dep,dc),missing) )
+            (n,sqff,cubff) =  get(ff_sp_dep_dc,(sp, dep,dc),missing)
+        elseif ! missingcheck(get(ff_sp_dc,(sp,dc),missing) )
+            (n,sqff,cubff) =  get(ff_sp_dc,(sp,dc),missing)
+        elseif ! missingcheck(get(ff_sp,(sp),missing) )
+            (n,sqff,cubff) =  get(ff_sp,(sp),missing)
+        else
+            (n,sqff,cubff) =  missing,missing, missing
+        end
+        return (!ismissing(sqff) && sqff < 20) ? (n,sqff,cubff) : (missing, missing, missing)
     end
 
-    if !( "prediction_hist_tree_volumes" in force_other) && (isfile(joinpath(basefolder,"tpobs.csv")))
-        tpobs = CSV.File(joinpath(basefolder,"tpobs.csv")) |> DataFrames.DataFrame
-    else
-        @info("Starting predicting individual trees volumes...")
-        x_topredict = copy(tpobs[:,train_fields[1:end-1]])
-        vest = BetaML.predict(tree_imputer_model, Matrix(x_topredict))
-        tpôbs      = deepcopy(tpobs)
-        tpôbs.V    = vest
-        # saving data data
-        CSV.write(joinpath(basefolder,"tpobs.csv"),tpôbs)
-        tpobs = tpôbs
-    end
 
     # Computing, after imputation, the vHa for each tree
-    tpobs.vHa  = vHaContribution.(tpobs.V,tpobs.C13)
+    #tpobs.vHa  = vHaContribution.(tpobs.V,tpobs.C13)
 
     # Selecting only points with 2 visits
     cmap = StatsBase.countmap(pobs.IDP)
@@ -164,23 +221,36 @@ function prepare_ign_data(settings)
 
     # Step 1: computing dfgrowth data
     @info("Starting building dfgrowth DataFrame...")
-    counts = fill(0,7)
-    dfgrowth = DataFrames.DataFrame(idp = Int64[], x = Float64[], y = Float64[], y1 = Int64[], y2 = Int64[],
-                    vHa1 = Float64[], vHa2 = Float64[], vHaD = Float64[], d1 = Float64[], d2 = Float64[],
-                    spg = String[], gov = String[])
+    skipped = Dict("harvesting_detected" => 0,
+                "out_of_mask" => 0,
+                "out_of_time_range" => 0,
+                "unsimulated_ftype" => 0,
+                "no_vertical_structure" => 0,
+                "missing_data" => 0,
+                "unreliable_data1" => 0,
+                "unreliable_data2" => 0,
+                "unreliable_data3" => 0,
+                "empty_plots" => 0,
+    )
+
+    dfgrowth = DataFrames.DataFrame(idp = Int64[], x = Float64[], y = Float64[], xid = Int64[], yid = Int64[], y1 = Int64[], y2 = Int64[], vHa1 = Float64[], vHa2 = Float64[], vHaD = Float64[], d1 = Float64[], d2 = Float64[], spg = String[], gov = String[])
     for (i,p) in enumerate(pids2)
-        counts[1] += 1
-        i%1000 == 0 && println("p: $p np: $(length(pids2)) counts: $counts")
+        #i == 10000 && break
+        #i = 500098
+        p = pids2[i]
+        #println("p: $p")
+        #p = 774806 # 507076 #500222
+        #i= 0
+        i%1000 == 0 && println("p: $p - Processed points: $i/$(length(pids2)) - Added points $(size(dfgrowth,1)) - skipped: $skipped")
         #p = pids2[end]
         #p = 146283 
-        mytrees2 = tpobs[tpobs.IDP .== p .&& tpobs.VISITE .==2, :]
-        size(mytrees2,1) < 2        && continue  # skip points with < 2 (dead or alive) trees on the second visit
-        counts[2] += 1
-        mytrees2.vegstate = [ismissing(t.VEGET5) ? t.VEGET : t.VEGET5  for t in eachrow(mytrees2)] # some second visit trees have veg state in VEGET instead of VEGET5 :-()
-        mytrees2_cutted = mytrees2[in.(mytrees2.vegstate, Ref(["6","7"])), :]
-        size(mytrees2_cutted,1) == 0 || continue  # skip points with cuts
-        counts[3] += 1
-        visit1 = pobs[pobs.IDP .== p .&& pobs.VISITE .== 1, :][1,:]
+        visit1   = pobs[pobs.IDP .== p .&& pobs.VISITE .== 1, :][1,:]
+        visit2   = pobs[pobs.IDP .== p .&& pobs.VISITE .== 2, :][1,:]
+
+        # Filters 1: early filters 
+        xid = searchsortedlast.(Ref(xcoords), visit1.XL) 
+        yid = y_l .- searchsortedlast.(Ref(y_rev), visit1.YL)
+        getindex(mask,xid,yid) == 1 || (skipped["out_of_mask"] += 1; continue ) # skip points outside the study area
         # Vertical structure
         vs= ""
         if !ismissing(visit1.SFO)
@@ -188,54 +258,64 @@ function prepare_ign_data(settings)
         elseif !ismissing(visit1.SVER) 
             vs = map_structure_sver[visit1.SVER]
         end
-        vs !== "" || continue # skip points with no vertical structure
-        counts[4] += 1
-        mytrees2_alive  = mytrees2[mytrees2.vegstate .== "0", :]
-        mytrees1 = tpobs[tpobs.IDP .== p .&& tpobs.VISITE .==1, :]
-        # Setting the vHa for the alive trees on the second visit as minima as their vHa on the first visit, if present
-        for (j,t) in enumerate(eachrow(mytrees2_alive))
-            t1s =  mytrees1[mytrees1.A .== t.A,:]
-            size(t1s,1) == 0 && continue    # tree not present on first visit, it's new mortality
-            t1 = t1s[1,:]
-            ismissing(t1.vHa) && continue # missing volume on first visit tree
-            t.vHa = max(t.vHa, t1.vHa) # setting the vHa for the alive trees on the second visit as minima as their vHa on the first visit
-        end
-        mytrees2_alive.vHa = vHaContribution.(mytrees2_alive.V, mytrees2_alive.C13) # computing vHa for alive trees on second visit
-        vHa2 = sum(mytrees2_alive.vHa)
-        ismissing(vHa2) && continue # skip points with no volume info on alive trees on second visit 
-        counts[5] += 1
-        # ended filters... (not really..)
-        mytrees1.vegstate = [ismissing(t.VEGET5) ? t.VEGET : t.VEGET5  for t in eachrow(mytrees1)] 
-        mytrees1_alive  = mytrees1[mytrees1.vegstate .== "0", :]
-        mytrees1_alive.vHa = vHaContribution.(mytrees1_alive.V, mytrees1_alive.C13) # computing vHa for alive trees on first visit
-        visit2 = pobs[pobs.IDP .== p .&& pobs.VISITE .== 2, :][1,:]
-        mytrees2_dead      = mytrees2[.! in.(mytrees2.vegstate, Ref(["0","6","7"])), :]
-        mytrees2_dead.vHA .= 0.0
-        countd1 = size(mytrees2_dead,1)
-        # Removing dead tress that were already dead on the first visit and assigning to deatch trees (that have no measured diameter) the vHa of the first visit
-        to_keep = fill(true,size(mytrees2_dead,1))
-        for (j,t) in enumerate(eachrow(mytrees2_dead))
-            t1s =  mytrees1[mytrees1.A .== t.A,:]
-            size(t1s,1) == 0 && continue    # tree not present on first visit, it's new mortality
-            t1 = t1s[1,:]
-            ismissing(t1.VEGET) && continue # not reported state on visit 1, assuming alive, so new mortality
-            (t1.VEGET .== "0") || (to_keep[j] = false) # was already not alive 
-            t.vHa = vHaContribution(t1.V,t1.C13) # computing vHa for dead trees on second visit
-        end
-        mytrees2_dead = mytrees2_dead[to_keep,:]
-        countd2 = size(mytrees2_dead,1)
-        # Removing points with trees that don't have hTOT, as their volumes are not reliable
-        check = false 
-        for t in eachrow(vcat(mytrees1_alive, mytrees2_alive))
-            ismissing(t.HTOT) && (check = true; break)
-        end
-        # if I enable this one I have no more points :-|
-        #check == false || continue # skip points with no HTOT on alive trees
-        counts[6] += 1
+        vs !== "" || (skipped["no_vertical_structure"] +=1; continue) # skip points with no vertical structure
+        (in(visit1.CAMPAGNE,hyears) && in(visit2.CAMPAGNE,hyears)) || (skipped["out_of_time_range"] += 1; continue ) # skip points outside the time range
+
+        treefields = ["VISITE", "A", "VSTATE", "ESPAR", "SPGR", "SER", "C13", "D", "DC", "SQFF", "CUBFF", "V", "W"]
+        mytrees  = tpobs[tpobs.IDP .== p, treefields]
+        mytrees1 = @view mytrees[mytrees.VISITE .==1, :]
+        mytrees2 = @view mytrees[mytrees.VISITE .==2, :]
+        
+        # Filters 2: mid-time filters
+        any(in.(mytrees2.VSTATE, Ref(["6","7"]))) && (skipped["harvesting_detected"] += 1; continue ) # skip points with harvesting detected
+        size(mytrees2,1) < 2  && (skipped["empty_plots"] += 1; continue )   # skip points with < 2 (dead or alive) trees on the second visit
+        (length(collect(skipmissing(mytrees.SQFF))) > 0 &&  maximum(collect(skipmissing(mytrees.SQFF))) < 20) || (skipped["unreliable_data1"] += 1; continue )   # skip points with unreliable ratio V/D
+        (length(collect(skipmissing(mytrees.SQFF))) > 0 && minimum(collect(skipmissing(mytrees.SQFF))) > 0.1) || (skipped["unreliable_data2"] += 1; continue )  # skip points with unreliable ratio V/D
+
+        mytrees21 = DataFrames.leftjoin(mytrees2, mytrees1, on = :A, makeunique=true)
+
+        mytrees21_alive  = @view mytrees21[mytrees21.VSTATE .== "0", :]
+        mytrees21_alive1 = @view mytrees21[.!ismissing.(mytrees21.VSTATE_1) .&& mytrees21.VSTATE_1 .== "0", :]
+        mytrees21_dead   = @view mytrees21[( (.! in.(mytrees21.VSTATE, Ref(["0","6","7"]))) # new dead only (not dead in the first visit)
+                                        .&& 
+                                    (ismissing.(mytrees21.VISITE_1) 
+                                        .|| 
+                                        (.! ismissing.(mytrees21.VSTATE_1)
+                                    .&& mytrees21.VSTATE_1 .== "0"))),:]
+        # Assigning to dead trees the diameter of first visit if missed
+        [t.D .== t.D_1 for t in eachrow(mytrees21_dead) if ismissing(t.D) && !ismissing(t.VISITE_1) && !ismissing(t.D_1)]
+
+
+        # Filter 3: final filter
+        # All alive2 trees and new-entry dead trees must have diameter
+        (sum(ismissing.(mytrees21_alive.D)) > 0 || sum(ismissing.(mytrees21_dead.D)) > 0 ) && (skipped["missing_data"] += 1; continue; )
+        sum(ismissing.(mytrees21_alive1.D_1)) > 0  && (skipped["missing_data"] += 1; continue; )
+        all(ismissing.(mytrees21_alive.VISITE_1) .|| ( mytrees21_alive.D .>= mytrees21_alive.D_1 .&&  (mytrees21_alive.D .<= 0.15 .|| mytrees21_alive.D .<= 1.5 * mytrees21_alive.D_1)          ) ) || (skipped["unreliable_data3"] += 1; continue  ) 
+        all(ismissing.(mytrees21_dead.VISITE_1) .|| ( mytrees21_dead.D .>= mytrees21_dead.D_1 .&&  (mytrees21_dead.D .<= 0.15 .|| mytrees21_dead.D .<= 1.5 * mytrees21_dead.D_1)          ) ) || (skipped["unreliable_data3"] += 1; continue)   
+        sum(mytrees21_alive1.D_1) > 0.05 || (skipped["empty_plots"] += 1; continue)  # otherwise difficult to make exponential growth
+
+        # Assigning W factor
+        [t.W = t.W_1 for t in eachrow(mytrees21) if ismissing(t.W) && !ismissing(t.VISITE_1) && !ismissing(t.W_1)]
+        [t.W = computeW(t.C13) for t in eachrow(mytrees21) if ismissing(t.W) && (ismissing(t.VISITE_1) || ismissing(t.W_1))]
+
+        # Assigning species if missing but species not missing in first visit
+        [t.ESPAR = t.ESPAR_1 for t in eachrow(mytrees21) if ismissing(t.ESPAR) && !ismissing(t.VISITE_1) && !ismissing(t.ESPAR_1)]
+
+        # computing species group
+        [t.SPGR = ismissing(t.ESPAR) ? missing : map_espar[t.ESPAR] for t in eachrow(mytrees21)]
+
+
+        # Assigning volumes, vHA and species groups
+        [t.V = 0.8 * t.D^3* t.CUBFF_1 + 0.2 * t.D^2* t.SQFF_1 for t in eachrow(mytrees21) if ismissing(t.V) && !ismissing(t.VISITE_1) && !ismissing(t.D_1) && !ismissing(t.V_1)]
+        [(ff = get_generic_ff(t.ESPAR,t.SER,t.DC); t.V = 0.8 * t.D^3* ff[3] + 0.2 * t.D^2* ff[2])  for t in eachrow(mytrees21) if ismissing(t.V) && (ismissing(t.VISITE_1) || ismissing(t.D_1) || ismissing(t.V_1))]
+
+        mytrees21.vHa = mytrees21.V .* mytrees21.W
+        mytrees21.vHa_1 = mytrees21.V_1 .* mytrees21.W_1
+
         # Defining the species group
-        mytrees1_alive.spgr = [map_espar[t.ESPAR] for t in eachrow(mytrees1_alive)]
-        vHaBr  = sum( mytrees1_alive[mytrees1_alive.spgr .== "br", "vHa"])
-        vHaCon = sum( mytrees1_alive[mytrees1_alive.spgr .== "con", "vHa"])
+    
+        vHaBr  = sum( mytrees21_alive[mytrees21_alive.SPGR .== "br", "vHa"])
+        vHaCon = sum( mytrees21_alive[mytrees21_alive.SPGR .== "con", "vHa"])
         vHaTot = vHaBr .+ vHaCon
         vHaBrRatio = vHaBr ./ vHaTot
         if vHaBrRatio < 0.1 
@@ -245,15 +325,11 @@ function prepare_ign_data(settings)
         else
             spgr = "br"
         end
-
-        # Removing points with no alive trees on first visit and both no new death trees and no alive trees on visit 2
-        size(mytrees1_alive,1) == 0 && size(mytrees2_dead,1) == 0 && size(mytrees2_alive,1) == 0 && continue
-        counts[7] += 1
-
-        vHa1 = sum(mytrees1_alive.vHa)
-        vHaD = sum(mytrees2_dead.vHa)
-        d1 = (size(mytrees1_alive,1) == 0) ? 0.0 : StatsBase.mean(mytrees1_alive.C13)  # some plots have no trees on the first visit, so no diameter. This is ok when the trees are too small to be measured
-        d2 = (size(mytrees2_alive,1) == 0) ? d1 : StatsBase.mean(mytrees2_alive.C13)
+        vHa1 = sum(mytrees21_alive1.vHa_1)
+        vHa2 = sum(mytrees21_alive.vHa)
+        vHaD = sum(mytrees21_dead.vHa)
+        d1 = (size(mytrees21_alive1,1) == 0) ? 0.0 : StatsBase.mean(mytrees21_alive1.C13_1)  # some plots have no trees on the first visit, so no diameter. This is ok when the trees are too small to be measured
+        d2 = (size(mytrees21_alive,1) == 0) ? d1 : StatsBase.mean(mytrees21_alive.C13)
         # Checking for no missing values...
         ismissing(visit1.XL) && error("XL missing for point $p")
         ismissing(visit1.YL) && error("YL missing for point $p")
@@ -266,15 +342,33 @@ function prepare_ign_data(settings)
         ismissing(d2) && error("d2 missing for point $p")
         ismissing(spgr) && error("spgr missing for point $p")
         ismissing(vs) && error("vs missing for point $p")
+        (vHa2+vHaD) <  (vHa1 - 0.00000001) && error("vHa2 + vHaD < vHa1 for point $p")
         # Now I have everything I need to create the row for the growing_points DataFrame
-        push!(dfgrowth, [p, visit1.XL, visit1.YL, visit1.CAMPAGNE, visit2.CAMPAGNE, vHa1, vHa2, vHaD, d1, d2, spgr, vs])
+
+        push!(dfgrowth, [p, visit1.XL, visit1.YL, xid, yid, visit1.CAMPAGNE, visit2.CAMPAGNE, vHa1, vHa2, vHaD, d1, d2, spgr, vs])
     end
+
+
+    unmatch = size(pids2,1)- sum(skipped[k] for k in keys(skipped)) - size(dfgrowth,1) 
+    verbosity >= GenFSM.HIGH && println("Unmatch in dfgrowth df creation (should be zero): $(unmatch)")
+    verbosity >= GenFSM.HIGH && println(skipped)
+
     dfgrowth.dV     = (dfgrowth.vHa2+dfgrowth.vHaD) .- dfgrowth.vHa1
     dfgrowth.dV2    = dfgrowth.vHa2 .- dfgrowth.vHa1
     dfgrowth.mShare = dfgrowth.vHaD ./ (dfgrowth.vHa2 .+ dfgrowth.vHaD) # share of dead volume in the total volume change
+    dfgrowth.ftype = ["$(r.spg)_$(r.gov)" for r in eachrow(dfgrowth)]
+
+    # Filter the volume growth df by observed historical weather, forest type simulmated and spatially within the mask grid
+    dfgrowth = dfgrowth[in.(dfgrowth.y1,Ref(hyears)) .&& in.(dfgrowth.y2,Ref(hyears)) .&& in.(dfgrowth.ftype,Ref(ftypes)),:]
+    #dfgrowth.xid = searchsortedlast.(Ref(xcoords), dfgrowth.x) 
+    #dfgrowth.yid = y_l .- searchsortedlast.(Ref(y_rev), dfgrowth.y)
+    #dfgrowth = dfgrowth[getindex.(Ref(mask),dfgrowth.xid,dfgrowth.yid) .== 1,:]
+
+
     CSV.write(joinpath(basefolder,"dfgrowth.csv"),dfgrowth)
 
-    @info("Done building dfgrowth DataFrame. Counts: $counts")
+
+    @info("Done building dfgrowth DataFrame.")
 
     # Step 2: building dfstate DataFrame
     @info("Starting building dfstate DataFrame...")
@@ -282,7 +376,7 @@ function prepare_ign_data(settings)
     #443593 in first visit and 218916 in second visit
 
     counts = fill(0,4)
-    dfstate = DataFrames.DataFrame(idp = Int64[], x = Float64[], y = Float64[], year=Int64[], vHa = Float64[], d = Float64[], spg = String[], gov = String[])
+    dfstate = DataFrames.DataFrame(idp = Int64[], x = Float64[], y = Float64[], xid=Float64[], yid=Float64[],year=Int64[], vHa = Float64[], d = Float64[], spg = String[], gov = String[])
     for (i,p) in enumerate(pid_latest)
         counts[1] += 1
         i%1000 == 0 && println("p: $p np: $(length(pid_latest)) counts: $counts")
@@ -290,13 +384,61 @@ function prepare_ign_data(settings)
         #p = 146283 
         visit = pobs[pobs.IDP .== p, :][1,:]
 
+        xid = searchsortedlast.(Ref(xcoords), visit.XL) 
+        yid = y_l .- searchsortedlast.(Ref(y_rev), visit.YL)
+        getindex(mask,xid,yid) == 1 || continue # skip points outside the study area
+
         in.(visit.CSA, Ref(["1","3","5","2"])) || continue # skip points with no forest structure (open, closed forest or popplars)
         counts[2] += 1
 
         mytrees = tpobs[tpobs.IDP .== p, :]
         mytrees.vegstate = [ismissing(t.VEGET5) ? t.VEGET : t.VEGET5  for t in eachrow(mytrees)] # some second visit trees have veg state in VEGET instead of VEGET5 :-()
         mytrees_alive  = mytrees[mytrees.vegstate .== "0", :]
-        mytrees_alive.vHa = vHaContribution.(mytrees_alive.V, mytrees_alive.C13) # computing vHa for alive trees on second visit
+
+        # estimating V, but only if the FF of the tree has already been computed on a previous occasion
+        for (j,t) in enumerate(eachrow(mytrees_alive))
+            if ismissing(t.V) && t.VISITE == 2
+                t1s = tpobs[tpobs.IDP .== t.IDP .&& tpobs.A .== t.A .&& tpobs.VISITE .== 1, :]
+                if size(t1s,1) == 1 && !ismissing(t1s[1,"V"]) # there is a match on first visit and the match has a volume
+                    t1 = t1s[1,:]
+                    sqFF, cubFF = (t1.SQFF, t1.CUBFF)
+                    # if also the diameter is missing, we give it the diameter of the previous 5 years
+                    if ismissing(t.D)
+                        t.D = t1.D
+                        t.C13 = t1.C13
+                    end
+                    t.V = 0.8 * t.D^3* cubFF + 0.2 * t.D^2* sqFF
+                end
+            end
+            if ismissing(t.W) && t.VISITE == 2
+                t1s = tpobs[tpobs.IDP .== t.IDP .&& tpobs.A .== t.A .&& tpobs.VISITE .== 1, :]
+                if size(t1s,1) == 1 && !ismissing(t1s[1,"W"]) # there is a match on first visit and the match has a volume
+                    t1 = t1s[1,:]
+                    # if also the diameter is missing, we give it the diameter of the previous 5 years
+                    if ismissing(t.D)
+                        t.D = t1.D
+                        t.C13 = t1.C13
+                    end
+                    t.W = t1.W
+                end
+            elseif ismissing(t.W) && t.VISITE == 1
+                t.W = computeW(t.C13) # computing W parameter
+            end
+
+            if t.VISITE == 2
+                t1s = tpobs[tpobs.IDP .== t.IDP .&& tpobs.A .== t.A .&& tpobs.VISITE .== 1, :]
+                # setting C13, D and V as minima as the value of first visit to reduce errors (e.g. point 507076, tree 11)
+                if size(t1s,1) > 0
+                    t1   = t1s[1,:]
+                    t.C13 = max(t.C13, t1.C13)
+                    t.D   = max(t.D, t1.D)
+                    t.V   = max(t.V, t1.V)
+                end
+            end
+        end
+        #mytrees_alive.vHa = vHaContribution.(mytrees_alive.V, mytrees_alive.C13) # computing vHa for alive trees on second visit
+        mytrees_alive.vHa = mytrees_alive.V .* mytrees_alive.W # computing vHa for alive trees on second visit 
+
         vHa = sum(mytrees_alive.vHa)
 
         ismissing(vHa) && continue # skip points with no volume (or diameterinfo on alive trees
@@ -338,14 +480,20 @@ function prepare_ign_data(settings)
         ismissing(spgr) && error("spgr missing for point $p")
         ismissing(vs) && error("vs missing for point $p")
         # Now I have everything I need to create the row for the growing_points DataFrame
-        push!(dfstate, [p, visit.XL, visit.YL, visit.CAMPAGNE, vHa, d, spgr, vs])
+        push!(dfstate, [p, visit.XL, visit.YL, xid, yid, visit.CAMPAGNE, vHa, d, spgr, vs])
     end
-    @info("Done building dfgrowth DataFrame. Counts: $counts")
+    @info("Done building dfgrowth DataFrame.")
+
+    #dfstate.xid = searchsortedlast.(Ref(xcoords), dfstate.x) 
+    #dfstate.yid = y_l .- searchsortedlast.(Ref(y_rev), dfstate.y)
+    #dfstate = dfstate[getindex.(Ref(mask),dfstate.xid,dfstate.yid) .== 1,:]
 
     # Saving the growing points data
     CSV.write(joinpath(basefolder,"dfstate.csv"),dfstate)
 
     return dfstate, dfgrowth 
+
+
 end
 
 
@@ -588,23 +736,23 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
         xfixedpx[ridx,[1,2]] .= [c,r]
         cidx = 3
         for v in xnames
-        if(ismissing(xrasters[v][c,r]))
-            # This happens in a few pixels at the border of the mask. Assigning the average of the variable in the neighmour pixels
-            vals = Float64[]
-            for c2 in max(1,c-2):min(nC,c+2)
-            for r2 in max(1,r-2):min(nR,r+2)
-                if(mask[c2,r2] == 1 && !ismissing(xrasters[v][c2,r2]))
-                push!(vals,xrasters[v][c2,r2])
+            if(ismissing(xrasters[v][c,r]))
+                # This happens in a few pixels at the border of the mask. Assigning the average of the variable in the neighmour pixels
+                vals = Float64[]
+                for c2 in max(1,c-2):min(nC,c+2)
+                    for r2 in max(1,r-2):min(nR,r+2)
+                        if(mask[c2,r2] == 1 && !ismissing(xrasters[v][c2,r2]))
+                            push!(vals,xrasters[v][c2,r2])
+                        end
+                    end
                 end
-            end
-            end
-            if(length(vals) > 0)
-            n_problematic_px += 1
-            xfixedpx[ridx,cidx] = StatsBase.mean(vals)
+                if(length(vals) > 0)
+                n_problematic_px += 1
+                xfixedpx[ridx,cidx] = StatsBase.mean(vals)
             else
-            n_very_problematic_px += 1
-            xfixedpx[ridx,cidx] = StatsBase.mean(skipmissing(xrasters[v]))
-            verbosity >= GenFSM.HIGH && @warn("Missing value for variable `$(v)` at pixel $(c),$(r). No neighbour pixels found to calculate the average. using the mean of all pixels: $(xfixedpx[ridx,cidx])")
+                n_very_problematic_px += 1
+                xfixedpx[ridx,cidx] = StatsBase.mean(skipmissing(xrasters[v]))
+                verbosity >= GenFSM.HIGH && @warn("Missing value for variable `$(v)` at pixel $(c),$(r). No neighbour pixels found to calculate the average. using the mean of all pixels: $(xfixedpx[ridx,cidx])")
             end
         else
             #println("(v,c,r): $(v), $c, $r  - $(xrasters[v][c,r])")
@@ -632,7 +780,7 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
     ma    = BetaML.AutoEncoder(encoded_size=ae_encoded_size,layers_size=ae_hidden_layer_size,epochs=ae_base_nepochs,verbosity=BetaML.LOW, cache=false)
 
     last_mse_val = Inf
-    xpxfixed_reduced = nothing
+
 
     for n in 1:ae_max_ntrains
         verbosity >= GenFSM.STD && @info("  -- training passage: $n")
@@ -673,7 +821,7 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
     xtot = BetaML.predict(ms,Matrix(xfixedpx[:,3:end]))
     xtot_reduced = BetaML.predict(ma,xtot)
     xfixedpx_reduced= hcat(xfixedpx[:,1:2],DataFrames.DataFrame(xtot_reduced,:auto))
-    CSV.write(joinpath(basefolder,"xfixedpx_reduced.csv.gz"),xclimh_reduced;compress=true)
+    CSV.write(joinpath(basefolder,"xfixedpx_reduced.csv.gz"),xfixedpx_reduced;compress=true)
     BetaML.model_save(joinpath(basefolder,"ms_xfixedpx.jld2");ms)
     BetaML.model_save(joinpath(basefolder,"ma_xfixedpx.jld2");ma)
 
@@ -683,10 +831,170 @@ end
 
 
 
-function train_growth_model(settings, ign_growth, ae_clim_m, ae_soil_m)
+function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduced)
     # This function trains the growth model using the IGN growth data and the autoencoded climatic and soil data
     # It returns the trained growth model.
-    return nothing
+
+    # creating the datasets of the growth model, for each ign data point:
+    # x: forest_plot_type_dummies,xcoord,ycoord,clim_data(6),co2_concentration,pxfixed_data(6),v
+    # y: dv
+    # notes:
+    # - dv is computed, for the observed years, as finding first i from the v2=v1(1+i)^5 eq and then multiplying it to v3
+    # - the climate var are those of y2
+    # - the co2 is the average of the y1:y2 years
+
+    verbosity = settings["verbosity"]
+    verbosity >= GenFSM.STD && @info("- training growth model..")
+
+    force_ml_train = settings["res"]["fr"]["force_ml_train"]
+    basefolder     = joinpath(settings["res"]["fr"]["cache_path"],"forinv")
+
+    # if all needed files exists and no "xclim" in force_other, then returning the saved data
+    if (! ("growth" in force_ml_train)) && isfile(joinpath(basefolder,"growth_model.jld2"))
+        verbosity >= GenFSM.HIGH && @info(" -- loading growth model from saved file")
+        return BetaML.model_load(joinpath(basefolder,"growth_model.jld2"),"mgr")
+    end
+
+    ftypes    = settings["res"]["fr"]["ftypes"]
+    ohm       = BetaML.OneHotEncoder(categories = ftypes)
+    co2_conc_h = CSV.read(joinpath(settings["res"]["fr"]["cache_path"],"co2_historical","co2_conc.csv"), DataFrames.DataFrame)
+
+    nrecords = size(ign_growth,1)
+    nftypes = length(ftypes)
+    ae_encoded_size_cl = settings["res"]["fr"]["data_sources"]["clim"]["ae_encoded_size"]
+    ae_encoded_size_px = settings["res"]["fr"]["px_fixed_data"]["ae_encoded_size"]
+
+    growth_df = DataFrames.DataFrame(
+        ["$f" => Array{Bool,1}(undef,nrecords) for f in ftypes]...,
+        "x" => Array{Float64,1}(undef,nrecords),
+        "y" => Array{Float64,1}(undef,nrecords),
+        ["cl$(i)" => Array{Float64,1}(undef,nrecords) for i in 1:ae_encoded_size_cl ]...,
+        "co2_con" => Array{Float64,1}(undef,nrecords),
+        ["px$(i)" => Array{Float64,1}(undef,nrecords) for i in 1:ae_encoded_size_px ]...,
+        "v" => Array{Float64,1}(undef,nrecords),
+        "dv" => Array{Float64,1}(undef,nrecords),
+    )
+
+
+    # filling the growthdf with the data
+    for (ir,r) in enumerate(eachrow(ign_growth))
+        x = r.x
+        y = r.y
+        ft = vec(BetaML.predict(ohm, r.ftype))
+        xidx =r.xid                           
+        yidx = r.yid
+        cl_data = xclimh_reduced[xclimh_reduced.C .== xidx .&& xclimh_reduced.R .== yidx .&& xclimh_reduced.Y .== r.y2, 4:end][1,:] # this already include the 5 years of the period considered
+        pxfix_data = xfixedpx_reduced[xfixedpx_reduced.C .== xidx .&& xfixedpx_reduced.R .== yidx, 3:end][1,:]
+        co2_conc = StatsBase.mean(co2_conc_h[co2_conc_h.years .>= r.y1 .&& co2_conc_h.years .<= r.y2, "co2_conc"]) # avg of the period
+        v = (r.vHa2+r.vHaD+r.vHa1) / 2 # mean of the two observed periods, mortality included
+        dt = r.y2 - r.y1
+        dv_rate =  ((r.vHa2 + r.vHaD)/ r.vHa1)    ^(1 / dt) - 1  # mortality included
+        ydv = dv_rate * v
+        growth_df[ir,:] = [ft...,x,y,cl_data...,co2_conc,pxfix_data...,v,ydv]
+    end
+
+    x =  Matrix(growth_df[:,1:end-1])
+    y =  growth_df[:,end]
+
+    ((xtrain,xtest),(ytrain,ytest)) = BetaML.partition([x,y],[0.8,0.2])
+
+    nR,nd =  size(xtrain)
+
+    ms      = BetaML.Scaler(skip=1:nftypes) # skip=1:nftypes
+    xtrains =  BetaML.fit!(ms, xtrain)
+    xtests  = BetaML.predict(ms,xtest)
+    vscp1   = BetaML.parameters(ms).scalerpars.sfμ[end]
+    vscp2   = BetaML.parameters(ms).scalerpars.sfσ[end]
+
+
+
+    # Nonlinear Model: NN with constraints
+    # Note Logistic model:
+    # - in the t/v space:   v = b/(1+c*exp(-a*t))
+    # - in the dv/v space: dv = a*v -(a/b)*v^2
+    adj_coeff=0.001 
+    dvcomp(x,vscp1=vscp1,vscp2=vscp2,adj_coeff=0.001) = [x[1] * (x[3]/vscp2 - vscp1) - (adj_coeff*x[2]) * (x[3]/vscp2 - vscp1)^2]
+    l1_ab  = BetaML.DenseLayer(nd-1,Int(round(1.5*(nd-1))),f=BetaML.relu)
+    l1_v   = BetaML.ReplicatorLayer(1)
+    l1     = BetaML.GroupedLayer([l1_ab,l1_v])
+    l2_ab  = BetaML.DenseLayer(Int(round(1.5*(nd-1))),Int(round(1.5*(nd-1))),f=BetaML.relu)
+    l2_v   = BetaML.ReplicatorLayer(1)
+    l2     = BetaML.GroupedLayer([l2_ab,l2_v])
+    l3_ab  = BetaML.DenseLayer(Int(round(1.5*(nd-1))),2,f=BetaML.relu)
+    l3_v   = BetaML.ReplicatorLayer(1)
+    l3     = BetaML.GroupedLayer([l3_ab,l3_v])
+    l4     = BetaML.VectorFunctionLayer(3,f=dvcomp)
+    layers = [l1,l2,l3,l4]
+    mgr    = BetaML.NeuralNetworkEstimator(epochs=20, batch_size=16, layers=layers)
+
+    function getabv(m,r;adj_coeff=0.001)
+        comp_layers = BetaML.parameters(m).nnstruct.layers
+        xi_last = @pipe BetaML.forward(comp_layers[1],r)|> BetaML.forward(comp_layers[2],_) |> BetaML.forward(comp_layers[3],_) 
+        a = xi_last[1]
+        b = (a/xi_last[2])/adj_coeff
+        v = xi_last[3] 
+        dv = BetaML.forward(comp_layers[4],xi_last) # 4
+        return (a,b,v,dv[1])
+    end
+
+    # Train the model.. several attempts are made as sometimes (..often..) the model either doesn't converge or is linear
+    # The model is considered linear if the b parameter is too high (i.e. > 2e6)
+    # The model is considered converged if the relative mean error on the test set is below 0.5
+    # The model is reset and reinitialized if it doesn't converge or is linear
+    # Note that the training lukely is quite bipolar: either it converge to a linear model or it converge to a "rreasonable" nonlinear model.
+    function fit_hard!(mgr,xtrains,ytrain;adj_coeff=adj_coeff,verbosity=GenFSM.STD,maxattempts=30)
+        success = false
+        attempt = 1
+        mre_train = Inf
+        mre_test  = Inf
+        # First training...
+        while !success
+            verbosity >= GenFSM.LOW && @info "*** Training constrained model attempt $(attempt)..."
+            ŷtrain   = BetaML.fit!(mgr, xtrains, ytrain)
+            ŷtest    = BetaML.predict(mgr,xtests)
+            mre_train = BetaML.relative_mean_error(ytrain,ŷtrain)
+            mre_test  = BetaML.relative_mean_error(ytest,ŷtest)
+            js = rand(1:size(xtrains,1),3)
+
+
+            if mre_test < 0.5 
+            verbosity >= GenFSM.STD && @info "Growth model found a solution with mre_test=$(mre_test) and mre_train=$(mre_train). Let's check it is not linear..."
+            linear = false
+            for j in js
+                r = xtrains[j,:]
+                (aj,bj,vj,dvj) = getabv(mgr,r;adj_coeff=adj_coeff)
+                verbosity >= GenFSM.HIGH && @info "b parameter: $bj"
+                if abs(bj) > 2e6 
+                linear = true
+                end
+            end
+            if !linear # Chacking also that the model output is not linear
+                verbosity >= GenFSM.STD && @info "Growth model is not linear, we got what we wanted !!"
+                success = true
+            end
+            end
+            if !success 
+            verbosity >= GenFSM.STD && @info "going to reset the model and try again..."
+            BetaML.reset!(mgr)
+            BetaML.Nn.random_init!.(BetaML.hyperparameters(mgr).layers)
+            end
+            if attempt >= maxattempts
+                verbosity >= GenFSM.LOW && @error("Growth model failed to find a solution after $attempt attempts.")
+                return (success,mre_train, mre_test)
+            end
+            attempt += 1
+        end
+        return (success,mre_train, mre_test)
+    end
+
+    (success_flag, mre_train, mre_test) = fit_hard!(mgr,xtrains,ytrain;adj_coeff=adj_coeff,maxattempts=5) # mre_train=0.36419346513945666, mre_test=0.3733832308165264
+
+    verbosity >= GenFSM.STD && @info "Growth model trained with mre_train=$(mre_train) and mre_test=$(mre_test). Saving the model."
+
+    BetaML.model_save(joinpath(basefolder,"growth_model.jld2");mgr=mgr)
+
+
+    return mgr
 end
 
 function define_state(settings, mask)
