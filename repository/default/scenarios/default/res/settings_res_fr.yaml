@@ -78,8 +78,6 @@ data_sources:
   # - https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.txt
   co2_conc_url: "https://raw.githubusercontent.com/SantanderMetGroup/wrf-ghg-files/refs/heads/master/CAMtr_volume_mixing_ratio.${SSP_SCENARIO}"
 
-
-
 px_fixed_data:
     ae_nsample: 100000
     ae_base_nepochs: 10
@@ -91,5 +89,11 @@ ign_data:
   genders_broadleaves: ["Acer", "Aesculus", "Ailanthus", "Alnus", "Arbutus", "Betula", "Broussonetia", "Buxus", "Carpinus", "Castanea", "Catalpa", "Celtis", "Ceratonia", "Cercis", "Citrus", "Cornus", "Corylus", "Crataegus", "Cupressus", "Cydonia", "Diospyros", "Elaeagnus", "Erica", "Eucalyptus", "Euonymus", "Fagus", "Ficus", "Frangula", "Fraxinus", "Ilex", "Juglans", "Laburnum", "Laurus", "Liquidambar", "Liriodendron", "Maclura", "Malus", "Morus", "Olea", "Ostrya", "Paulownia", "Phillyrea", "Pistacia", "Platanus", "Populus", "Prunus", "Pyrus", "Quercus", "Rhamnus", "Rhus", "Robinia", "Salix", "Sambucus", "Sorbus", "Tamarix", "Tilia", "Ulmus", "Vachellia"]
   genders_coniferous: ["Abies", "Casuarina", "Cedrus", "Chamaecyparis", "Cryptomeria", "Cupressus", "Juglans", "Juniperus", "Larix", "Picea", "Pinus", "Pseudotsuga", "Pyrus", "Sequoia", "Sequoiadendron", "Taxodium", "Taxus", "Thuja", "Tsuga"]
   nsample_v_imputation: 1000
-  
+
+growth_model_training:
+  max_train_attempts: 100
+  acceptable_mre_val: 0.38
+  vol_growth_computation_adj_coeff: 0.001 # for comutational reasons to match orders of magnitude
+vol_growth_computation_adj_coeff: 0.001
+
 ftypes: ["br_HF", "br_COP", "br_MIX", "mixsp_HF", "mixsp_MIX", "con_HF"]

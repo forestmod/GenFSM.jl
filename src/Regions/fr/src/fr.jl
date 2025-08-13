@@ -14,12 +14,12 @@ import HTTP
 import ArchGDAL, Rasters, ZipFile, DataStructures # , FTPClient
 import Geomorphometry # for slope and aspect 
 import Shapefile
-import CSV, DataFrames
+import CSV, DataFrames, Tables
 import Proj # to convert the (X,Y) coordinates of the inventory points
 import GeoDataFrames
 import Logging
 import BetaML
-import JLD2
+#import JLD2
 
 import PythonCall
 import CondaPkg

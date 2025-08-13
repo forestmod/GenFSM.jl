@@ -143,23 +143,33 @@ function expand_classes(input_filename,classes;verbose=false,force=false,to=noth
     return class_vars
 end
 
+#=
 """
     vol_growth_computation_parameters
 
 A named tuple with the parameters of the volume growth computation function (volume scaling coefficients and adjustment coefficient for computational reasons).
 """
 vol_growth_computation_parameters::@NamedTuple{vol_sc_par_mu::Float64, vol_sc_par_sd::Float64, adj_coeff::Float64} = (vol_sc_par_mu=1.0, vol_sc_par_sd=0.0, adj_coeff=0.001)
+=#
 
 """ 
-    vol_growth_computation(x)
+    vol_growth_computation(x,vol_growth_computation_parameters)
 
-Compute the volume growth based on the parameters defined in `vol_growth_computation_parameters`. Used in the last layer of the neural network for volume growth computation.
-X[1] and x[2] are the outputs of the last layer of the climate and soil (px fixed characteristics) neural network branch, and x[3] is the input volume.
-adj_coeff is a coefficient to adjust the growth rate order of magnitude to the maximum volume parameter order of magnitude 
+Compute the volume growth based on the coefficients of the sigmoid function, the current volumes andparameters defined in `vol_growth_computation_parameters`. Used in the last layer of the neural network for volume growth computation.
+
+# Inputs:
+- `x`: a vector of length 3, where:
+  - `x[1]`: output from the climate branch of the neural network
+  - `x[2]`: output from the soil branch of the neural network
+  - `x[3]`: input volume
+- `vol_growth_computation_parameters`: a named tuple containing:
+  - `vol_sc_par_mu`: mean of the volume scaling parameter
+  - `vol_sc_par_sd`: standard deviation of the volume scaling parameter
+  - `adj_coeff`: adjustment coefficient for computational reasons, to adjust the order of magnitude of the growth rate coefficient to the order of magnitude of the maximum volume coefficient
 """
-vol_growth_computation(x) = [x[1] * (x[3]/vol_growth_computation_parameters.vol_sc_par_sd - vol_growth_computation_parameters.vol_sc_par_mu) - (vol_growth_computation_parameters.adj_coeff*x[2]) * (x[3]/vol_growth_computation_parameters.vol_sc_par_sd - vol_growth_computation_parameters.vol_sc_par_mu)^2]
+vol_growth_computation(x,vol_growth_computation_parameters= (vol_sc_par_mu=1.0, vol_sc_par_sd=0.0, adj_coeff=1.0) ) = [x[1] * (x[3]/vol_growth_computation_parameters.vol_sc_par_sd - vol_growth_computation_parameters.vol_sc_par_mu) - (vol_growth_computation_parameters.adj_coeff*x[2]) * (x[3]/vol_growth_computation_parameters.vol_sc_par_sd - vol_growth_computation_parameters.vol_sc_par_mu)^2]
 
-function vol_growth_computation_get_coefficients(m,r;adj_coeff=vol_growth_computation_parameters.adj_coeff)
+function vol_growth_computation_get_coefficients(m,r;adj_coeff=1.0)
     comp_layers = BetaML.parameters(m).nnstruct.layers
     xi_last = @pipe BetaML.forward(comp_layers[1],r)|> BetaML.forward(comp_layers[2],_) |> BetaML.forward(comp_layers[3],_) 
     a = xi_last[1]
