@@ -852,6 +852,7 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
     # if all needed files exists and no "xclim" in force_other, then returning the saved data
     if (! ("growth" in force_ml_train)) && isfile(joinpath(basefolder,"growth_model.jld2"))
         verbosity >= GenFSM.HIGH && @info(" -- loading growth model from saved file")
+        global vol_growth_computation_parameters = JLD2.load(joinpath(basefolder,"vol_growth_computation_parameters.jld2"),"vol_growth_computation_parameters")
         return BetaML.model_load(joinpath(basefolder,"growth_model.jld2"),"mgr")
     end
 
@@ -906,14 +907,14 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
     vscp1   = BetaML.parameters(ms).scalerpars.sfμ[end]
     vscp2   = BetaML.parameters(ms).scalerpars.sfσ[end]
 
-
+    global vol_growth_computation_parameters = (vol_sc_par_mu=vscp1, vol_sc_par_sd=vscp2, adj_coeff=0.001)
 
     # Nonlinear Model: NN with constraints
     # Note Logistic model:
     # - in the t/v space:   v = b/(1+c*exp(-a*t))
     # - in the dv/v space: dv = a*v -(a/b)*v^2
-    adj_coeff=0.001 
-    dvcomp(x,vscp1=vscp1,vscp2=vscp2,adj_coeff=0.001) = [x[1] * (x[3]/vscp2 - vscp1) - (adj_coeff*x[2]) * (x[3]/vscp2 - vscp1)^2]
+    #adj_coeff=0.001 
+    #dvcomp(x,vscp1=vscp1,vscp2=vscp2,adj_coeff=0.001) = [x[1] * (x[3]/vscp2 - vscp1) - (adj_coeff*x[2]) * (x[3]/vscp2 - vscp1)^2]
     l1_ab  = BetaML.DenseLayer(nd-1,Int(round(1.5*(nd-1))),f=BetaML.relu)
     l1_v   = BetaML.ReplicatorLayer(1)
     l1     = BetaML.GroupedLayer([l1_ab,l1_v])
@@ -923,26 +924,18 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
     l3_ab  = BetaML.DenseLayer(Int(round(1.5*(nd-1))),2,f=BetaML.relu)
     l3_v   = BetaML.ReplicatorLayer(1)
     l3     = BetaML.GroupedLayer([l3_ab,l3_v])
-    l4     = BetaML.VectorFunctionLayer(3,f=dvcomp)
+    # todo: transform the dvcomp into an anonymopus variable, otherwise the model when loaded from serialization file will need to be loaded in a scope where the fucntion dvcomp is defined.
+    # too late for the already saved models :-/
+    l4     = BetaML.VectorFunctionLayer(3,f=vol_growth_computation)
     layers = [l1,l2,l3,l4]
     mgr    = BetaML.NeuralNetworkEstimator(epochs=20, batch_size=16, layers=layers)
-
-    function getabv(m,r;adj_coeff=0.001)
-        comp_layers = BetaML.parameters(m).nnstruct.layers
-        xi_last = @pipe BetaML.forward(comp_layers[1],r)|> BetaML.forward(comp_layers[2],_) |> BetaML.forward(comp_layers[3],_) 
-        a = xi_last[1]
-        b = (a/xi_last[2])/adj_coeff
-        v = xi_last[3] 
-        dv = BetaML.forward(comp_layers[4],xi_last) # 4
-        return (a,b,v,dv[1])
-    end
 
     # Train the model.. several attempts are made as sometimes (..often..) the model either doesn't converge or is linear
     # The model is considered linear if the b parameter is too high (i.e. > 2e6)
     # The model is considered converged if the relative mean error on the test set is below 0.5
     # The model is reset and reinitialized if it doesn't converge or is linear
     # Note that the training lukely is quite bipolar: either it converge to a linear model or it converge to a "rreasonable" nonlinear model.
-    function fit_hard!(mgr,xtrains,ytrain;adj_coeff=adj_coeff,verbosity=GenFSM.STD,maxattempts=30)
+    function fit_hard!(mgr,xtrains,ytrain;vol_growth_computation_parameters=vol_growth_computation_parameters,verbosity=GenFSM.STD,maxattempts=30)
         success = false
         attempt = 1
         mre_train = Inf
@@ -962,7 +955,7 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
             linear = false
             for j in js
                 r = xtrains[j,:]
-                (aj,bj,vj,dvj) = getabv(mgr,r;adj_coeff=adj_coeff)
+                (aj,bj,vj,dvj) = vol_growth_computation_get_coefficients(mgr,r;adj_coeff=vol_growth_computation_parameters.adj_coeff)
                 verbosity >= GenFSM.HIGH && @info "b parameter: $bj"
                 if abs(bj) > 2e6 
                 linear = true
@@ -978,7 +971,7 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
             BetaML.reset!(mgr)
             BetaML.Nn.random_init!.(BetaML.hyperparameters(mgr).layers)
             end
-            if attempt >= maxattempts
+            if attempt > maxattempts
                 verbosity >= GenFSM.LOW && @error("Growth model failed to find a solution after $attempt attempts.")
                 return (success,mre_train, mre_test)
             end
@@ -987,12 +980,12 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
         return (success,mre_train, mre_test)
     end
 
-    (success_flag, mre_train, mre_test) = fit_hard!(mgr,xtrains,ytrain;adj_coeff=adj_coeff,maxattempts=5) # mre_train=0.36419346513945666, mre_test=0.3733832308165264
+    (success_flag, mre_train, mre_test) = fit_hard!(mgr,xtrains,ytrain;vol_growth_computation_parameters=vol_growth_computation_parameters,maxattempts=5) # mre_train=0.36419346513945666, mre_test=0.3733832308165264
 
     verbosity >= GenFSM.STD && @info "Growth model trained with mre_train=$(mre_train) and mre_test=$(mre_test). Saving the model."
 
     BetaML.model_save(joinpath(basefolder,"growth_model.jld2");mgr=mgr)
-
+    JLD2.save(joinpath(basefolder,"vol_growth_computation_parameters.jld2", "vol_growth_computation_parameters", vol_growth_computation_parameters))
 
     return mgr
 end

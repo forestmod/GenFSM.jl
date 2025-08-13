@@ -142,3 +142,29 @@ function expand_classes(input_filename,classes;verbose=false,force=false,to=noth
     end
     return class_vars
 end
+
+"""
+    vol_growth_computation_parameters
+
+A named tuple with the parameters of the volume growth computation function (volume scaling coefficients and adjustment coefficient for computational reasons).
+"""
+vol_growth_computation_parameters::@NamedTuple{vol_sc_par_mu::Float64, vol_sc_par_sd::Float64, adj_coeff::Float64} = (vol_sc_par_mu=1.0, vol_sc_par_sd=0.0, adj_coeff=0.001)
+
+""" 
+    vol_growth_computation(x)
+
+Compute the volume growth based on the parameters defined in `vol_growth_computation_parameters`. Used in the last layer of the neural network for volume growth computation.
+X[1] and x[2] are the outputs of the last layer of the climate and soil (px fixed characteristics) neural network branch, and x[3] is the input volume.
+adj_coeff is a coefficient to adjust the growth rate order of magnitude to the maximum volume parameter order of magnitude 
+"""
+vol_growth_computation(x) = [x[1] * (x[3]/vol_growth_computation_parameters.vol_sc_par_sd - vol_growth_computation_parameters.vol_sc_par_mu) - (vol_growth_computation_parameters.adj_coeff*x[2]) * (x[3]/vol_growth_computation_parameters.vol_sc_par_sd - vol_growth_computation_parameters.vol_sc_par_mu)^2]
+
+function vol_growth_computation_get_coefficients(m,r;adj_coeff=vol_growth_computation_parameters.adj_coeff)
+    comp_layers = BetaML.parameters(m).nnstruct.layers
+    xi_last = @pipe BetaML.forward(comp_layers[1],r)|> BetaML.forward(comp_layers[2],_) |> BetaML.forward(comp_layers[3],_) 
+    a = xi_last[1]
+    b = (a/xi_last[2])/adj_coeff
+    v = xi_last[3] 
+    dv = BetaML.forward(comp_layers[4],xi_last) # 4
+    return (a,b,v,dv[1])
+end
