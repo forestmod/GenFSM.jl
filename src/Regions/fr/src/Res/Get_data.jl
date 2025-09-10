@@ -208,7 +208,7 @@ function get_soil_data(settings,mask)
     texture_filename = joinpath(soil_path,"TextureUSDA_reg.tif")
     texture_classes = expand_classes(texture_filename,soil_texture_classes;verbose=verbose,force=force,to=nothing)
     delete!(soil_vars,"TextureUSDA")
-    soil_vars = DataStructures.OrderedDict(soil_vars..., texture_classes...)
+    soil_vars = DataStructures.OrderedDict(texture_classes...,soil_vars...)
 
     # Other soil variables
     urlname   = soil_oth_url
@@ -216,7 +216,12 @@ function get_soil_data(settings,mask)
     zipfolder = joinpath(soil_path, split(basename(urlname),".")[1])
     finalfolder = joinpath(soil_path,"soil_oth_vars")
     if (ispath(finalfolder) && (!force) )
-        return soil_vars
+        #return soil_vars # bug 20251104 !!! the "oth" variables are not returned !! 
+        for var in soil_oth_vars
+            final_file = joinpath(finalfolder,"$(var)_reg.tif")
+            soil_vars[var] = final_file
+        end
+        return soil_vars 
     end
     ispath(finalfolder) || mkpath(finalfolder)
     Downloads.download(urlname,zipname, verbose=verbose)

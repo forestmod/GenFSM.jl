@@ -697,18 +697,19 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
     verbosity >= GenFSM.STD && @info("- autoencoding px fixed data")
 
     force_other    = settings["res"]["fr"]["force_other"]
-    basefolder     = joinpath(settings["res"]["fr"]["cache_path"])
+    basefolder     = joinpath(settings["res"]["fr"]["cache_path"],"pxfixed")
 
     # if all needed files exists and no "xclim" in force_other, then returning the saved data
     if (! ("xfixedpx_reduced" in force_other)) && isfile(joinpath(basefolder,"xfixedpx_reduced.csv.gz"))
         xfixedpx_reduced = CSV.File(joinpath(basefolder,"xfixedpx_reduced.csv.gz")) |> DataFrames.DataFrame
         return xfixedpx_reduced
     end
+    isdir(basefolder) || mkpath(basefolder)
 
     datafiles_dtm = settings["res"]["fr"]["input_rasters"]["dtm"]
     datafiles_soil = settings["res"]["fr"]["input_rasters"]["soil"]
-    datafiles = merge(datafiles_dtm, datafiles_soil)
-    ae_nsample = settings["res"]["fr"]["px_fixed_data"]["ae_nsample"]
+    datafiles = merge(datafiles_soil,datafiles_dtm) # first soil, so I have the classes not to scalar at the beginning
+    ae_maxntrain = settings["res"]["fr"]["px_fixed_data"]["ae_maxntrain"]
     ae_base_nepochs = settings["res"]["fr"]["px_fixed_data"]["ae_base_nepochs"]
     ae_max_ntrains  = settings["res"]["fr"]["px_fixed_data"]["ae_max_ntrains"]
     ae_hidden_layer_size = settings["res"]["fr"]["px_fixed_data"]["ae_hidden_layer_size"]
@@ -719,8 +720,9 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
     nx    = sum(mask)
     nd_dtm  = length(keys(datafiles_dtm))
     nd_soil = length(keys(datafiles_soil))
+    soil_texture_n_classes = settings["res"]["fr"]["data_sources"]["soil_texture_n_classes"]
 
-    verbosity >= GenFSM.STD && @info(" -- creating xclimh df from raster files")
+    verbosity >= GenFSM.STD && @info(" -- creating xfixedpx df from raster files")
 
     xrasters = OrderedDict{String,Rasters.Raster}([i => Rasters.Raster(datafiles[i]) |> Rasters.replace_missing for i in xnames])
     # by time (month, year) var name
@@ -730,57 +732,68 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
     ridx = 1
     (n_problematic_px, n_very_problematic_px) = (0,0)
     for c in 1:nC
-    verbosity > GenFSM.HIGH && @info("    -- creating xfixedpx  data for column: $c")
-    for r in 1:nR
-        mask[c,r] == 1 || continue # skip pixels outside the mask
-        xfixedpx[ridx,[1,2]] .= [c,r]
-        cidx = 3
-        for v in xnames
-            if(ismissing(xrasters[v][c,r]))
-                # This happens in a few pixels at the border of the mask. Assigning the average of the variable in the neighmour pixels
-                vals = Float64[]
-                for c2 in max(1,c-2):min(nC,c+2)
-                    for r2 in max(1,r-2):min(nR,r+2)
-                        if(mask[c2,r2] == 1 && !ismissing(xrasters[v][c2,r2]))
-                            push!(vals,xrasters[v][c2,r2])
+        verbosity > GenFSM.HIGH && @info("    -- creating xfixedpx  data for column: $c")
+        for r in 1:nR
+            mask[c,r] == 1 || continue # skip pixels outside the mask
+            xfixedpx[ridx,[1,2]] .= [c,r]
+            cidx = 3
+            for v in xnames
+                if(ismissing(xrasters[v][c,r]))
+                    # This happens in a few pixels at the border of the mask. Assigning the average of the variable in the neighmour pixels
+                    vals = Float64[]
+                    for c2 in max(1,c-2):min(nC,c+2)
+                        for r2 in max(1,r-2):min(nR,r+2)
+                            if(mask[c2,r2] == 1 && !ismissing(xrasters[v][c2,r2]))
+                                push!(vals,xrasters[v][c2,r2])
+                            end
                         end
                     end
+                    if(length(vals) > 0)
+                        n_problematic_px += 1
+                        xfixedpx[ridx,cidx] = StatsBase.mean(vals)
+                    else
+                        n_very_problematic_px += 1
+                        xfixedpx[ridx,cidx] = StatsBase.mean(skipmissing(xrasters[v]))
+                        verbosity >= GenFSM.HIGH && @warn("Missing value for variable `$(v)` at pixel $(c),$(r). No neighbour pixels found to calculate the average. using the mean of all pixels: $(xfixedpx[ridx,cidx])")
+                    end
+                else
+                    #println("(v,c,r): $(v), $c, $r  - $(xrasters[v][c,r])")
+                    xfixedpx[ridx,cidx] = xrasters[v][c,r]
                 end
-                if(length(vals) > 0)
-                n_problematic_px += 1
-                xfixedpx[ridx,cidx] = StatsBase.mean(vals)
-            else
-                n_very_problematic_px += 1
-                xfixedpx[ridx,cidx] = StatsBase.mean(skipmissing(xrasters[v]))
-                verbosity >= GenFSM.HIGH && @warn("Missing value for variable `$(v)` at pixel $(c),$(r). No neighbour pixels found to calculate the average. using the mean of all pixels: $(xfixedpx[ridx,cidx])")
+                cidx +=1
             end
-        else
-            #println("(v,c,r): $(v), $c, $r  - $(xrasters[v][c,r])")
-            xfixedpx[ridx,cidx] = xrasters[v][c,r]
+            ridx +=1
         end
-        cidx +=1
-        end
-        ridx +=1
-    end
     end
 
-    verbosity >= GenFSM.HIGH && @info("    -- finished creating xfixedpx data. Number of pixels with missing values: $(n_problematic_px), number of pixels with no neighbour pixels: $(n_very_problematic_px)")
+    npx         = size(xfixedpx,1)
+    train_ratio = min(ae_maxntrain/npx, 0.8)
+    verbosity >= GenFSM.HIGH && @info("    -- finished creating xfixedpx data. Number of pixels with missing values: $(n_problematic_px), number of pixels with no neighbour pixels: $(n_very_problematic_px), number of total pixels: $(ridx) ($(npx))")
 
+    #=
     srows = StatsBase.sample(axes(xfixedpx, 1), ae_nsample,replace = false)
     sx    = view(xfixedpx, srows, :)
-    datax = Matrix(sx[:,3:end])
+    datax = Matrix(sx[:,3:end]) # NOTE: I skip the first two columns (C,R) !!
     nd = size(datax,2)
-    ((xtrain,xval),) = BetaML.partition([datax],[0.8,0.2])
+    =#
 
-    ms    = BetaML.Scaler(cache=false,skip=nd-12:nd) # skip to scale the categorical TextureUSDA category cols
 
-    BetaML.fit!(ms,xtrain)
+    # we don't use C/R in fixedpx
+    ((xtrain,xval),(trainids,valids)) = BetaML.partition([Matrix(xfixedpx[:,3:end]),hcat(1:npx)],[train_ratio,1-train_ratio])
+
+    CSV.write(joinpath(basefolder,"xfixedpx.csv.gz"),xfixedpx;compress=true)
+    CSV.write(joinpath(basefolder,"xfixedpx_trainids.csv"),Tables.table(trainids))
+    CSV.write(joinpath(basefolder,"xfixedpx_valids.csv"),Tables.table(valids))
+
+    ms    = BetaML.Scaler(cache=false,skip=1:soil_texture_n_classes) # skip to scale the categorical TextureUSDA category cols
+
+    BetaML.fit!(ms,xfixedpx[:,3:end]) # old: BetaML.fit!(ms,xtrain)
+    BetaML.model_save(joinpath(basefolder,"ms_xfixedpx.jld2");ms)
     xtrains  = BetaML.predict(ms,xtrain)
 
     ma    = BetaML.AutoEncoder(encoded_size=ae_encoded_size,layers_size=ae_hidden_layer_size,epochs=ae_base_nepochs,verbosity=BetaML.LOW, cache=false)
 
     last_mse_val = Inf
-
 
     for n in 1:ae_max_ntrains
         verbosity >= GenFSM.STD && @info("  -- training passage: $n")
@@ -822,7 +835,6 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
     xtot_reduced = BetaML.predict(ma,xtot)
     xfixedpx_reduced= hcat(xfixedpx[:,1:2],DataFrames.DataFrame(xtot_reduced,:auto))
     CSV.write(joinpath(basefolder,"xfixedpx_reduced.csv.gz"),xfixedpx_reduced;compress=true)
-    BetaML.model_save(joinpath(basefolder,"ms_xfixedpx.jld2");ms)
     BetaML.model_save(joinpath(basefolder,"ma_xfixedpx.jld2");ma)
 
     return xfixedpx_reduced
@@ -899,17 +911,23 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
 
     x =  Matrix(growth_df[:,1:end-1])
     y =  growth_df[:,end]
-
-    ((xtrain,xval,xtest),(ytrain,yval,ytest)) = BetaML.partition([x,y],[0.75,0.2,0.05])
+    xids = ign_growth.xid
+    yids = ign_growth.yid
+    ((xtrain,xval,xtest),(ytrain,yval,ytest),(xidstrain,xidsval,xidstest),(yidstrain,yidsval,yidstest)) = BetaML.partition([x,y,xids,yids],[0.75,0.2,0.05])
 
     nR,nd =  size(xtrain)
 
     ms      = BetaML.Scaler(skip=1:nftypes) # skip=1:nftypes
-    xtrains =  BetaML.fit!(ms, xtrain)
-    xvals  = BetaML.predict(ms,xval)
-    xtests  = BetaML.predict(ms,xtest)
-    vscp1   = BetaML.parameters(ms).scalerpars.sfμ[end]
-    vscp2   = BetaML.parameters(ms).scalerpars.sfσ[end]
+    BetaML.fit!(ms, xtrain)
+    # hack needed because the insample co2 conc range in somehting like [350,400], but the future one goes to over 1000, if scaled only based on historical then crazy values are predicted
+    co2conc_position = nftypes+ae_encoded_size_cl+3
+    BetaML.parameters(ms).scalerpars.sfμ[co2conc_position]=0
+    BetaML.parameters(ms).scalerpars.sfσ[co2conc_position]=0.0005
+    xtrains  = BetaML.predict(ms,xtrain)
+    xvals    = BetaML.predict(ms,xval)
+    xtests   = BetaML.predict(ms,xtest)
+    vscp1    = BetaML.parameters(ms).scalerpars.sfμ[end]
+    vscp2    = BetaML.parameters(ms).scalerpars.sfσ[end]
 
     vol_growth_computation_parameters = (vol_sc_par_mu=vscp1, vol_sc_par_sd=vscp2, adj_coeff=adj_coeff)
 
@@ -919,6 +937,10 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
     # - in the dv/v space: dv = a*v -(a/b)*v^2
     #adj_coeff=0.001 
     #dvcomp(x,vscp1=vscp1,vscp2=vscp2,adj_coeff=0.001) = [x[1] * (x[3]/vscp2 - vscp1) - (adj_coeff*x[2]) * (x[3]/vscp2 - vscp1)^2]
+    # JDB observation: the two parameters a,b are correlated so everytime we have higher growth rate a we have also shorted estimated carrying capacity b 
+    # We should instead parametrize the logistic using the parameter Vdotmax (itself equal to ab/4) instead of a in order to get the two parameters uncorrelated. 
+    # I can check with syntetic data, as in reality the network doesn't try to search for the parameters, it try to minimize the distance with observed dotV
+
     l1_ab  = BetaML.DenseLayer(nd-1,Int(round(1.5*(nd-1))),f=BetaML.relu)
     l1_v   = BetaML.ReplicatorLayer(1)
     l1     = BetaML.GroupedLayer([l1_ab,l1_v])
@@ -930,14 +952,14 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
     l3     = BetaML.GroupedLayer([l3_ab,l3_v])
     l4     = BetaML.VectorFunctionLayer(3,f=Base.Fix2(vol_growth_computation,vol_growth_computation_parameters))
     layers = [l1,l2,l3,l4]
-    mgr    = BetaML.NeuralNetworkEstimator(epochs=20, batch_size=16, layers=layers)
+    mgr    = BetaML.NeuralNetworkEstimator(epochs=20, batch_size=16, layers=layers, fail_attempts=30)
 
     # Train the model.. several attempts are made as sometimes (..often..) the model either doesn't converge or is linear
     # The model is considered linear if the b parameter is too high (i.e. > 2e6)
     # The model is considered converged if the relative mean error on the test set is below acceptable_mre_val
     # The model is reset and reinitialized if it doesn't converge or is linear
     # Note that the training lukely is quite bipolar: either it converge to a linear model or it converge to a "rreasonable" nonlinear model.
-    function fit_hard!(mgr,xtrains,ytrain;vol_growth_computation_parameters,verbosity=GenFSM.STD,max_train_attempts=30,acceptable_mre_val=0.5)
+    function fit_hard!(mgr,xtrains,ytrain,xvals,yval;vol_growth_computation_parameters,verbosity=GenFSM.STD,max_train_attempts=30,acceptable_mre_val=0.5)
         success = false
         attempt = 1
         mre_train = Inf
@@ -950,28 +972,28 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
             mre_train = BetaML.relative_mean_error(ytrain,ŷtrain)
             mre_val  = BetaML.relative_mean_error(yval,ŷval)
             js = rand(1:size(xtrains,1),3)
-
-
             if mre_val < acceptable_mre_val
-            verbosity >= GenFSM.STD && @info "Growth model found a solution with mre_train=$(mre_train) and mre_val=$(mre_val). Let's check it is not linear..."
-            linear = false
-            for j in js
-                r = xtrains[j,:]
-                (aj,bj,vj,dvj) = vol_growth_computation_get_coefficients(mgr,r;adj_coeff=vol_growth_computation_parameters.adj_coeff)
-                verbosity >= GenFSM.STD && @info "b parameter: $bj"
-                if abs(bj) > 2e6 
-                linear = true
+                verbosity >= GenFSM.STD && @info "Growth model found a solution with mre_train=$(mre_train) and mre_val=$(mre_val). Let's check it is not linear..."
+                linear = false
+                for j in js
+                    r = xtrains[j,:]
+                    (aj,bj,vj,dvj) = vol_growth_computation_get_coefficients(mgr,r;adj_coeff=vol_growth_computation_parameters.adj_coeff)
+                    verbosity >= GenFSM.STD && @info "b parameter: $bj"
+                    if abs(bj) > 2e6 
+                    linear = true
+                    end
                 end
-            end
-            if !linear # Chacking also that the model output is not linear
-                verbosity >= GenFSM.STD && @info "Growth model is not linear, we got what we wanted !!"
-                success = true
-            end
+                if !linear # Chacking also that the model output is not linear
+                    verbosity >= GenFSM.STD && @info "Growth model is not linear, we got what we wanted !!"
+                    success = true
+                end
+            else
+                verbosity >= GenFSM.STD && @info "Growth model mre_val=$(mre_val) is not acceptable (max acceptable is $(acceptable_mre_val)). Let's try again..."
             end
             if !success 
-            verbosity >= GenFSM.STD && @info "going to reset the model and try again..."
-            BetaML.reset!(mgr)
-            BetaML.Nn.random_init!.(BetaML.hyperparameters(mgr).layers)
+                verbosity >= GenFSM.STD && @info "going to reset the model and try again..."
+                BetaML.reset!(mgr)
+                BetaML.Nn.random_init!.(BetaML.hyperparameters(mgr).layers)
             end
             if attempt > max_train_attempts
                 verbosity >= GenFSM.LOW && @error("Growth model failed to find a solution after $attempt attempts.")
@@ -982,7 +1004,7 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
         return (success,mre_train, mre_val)
     end
 
-    (success_flag, mre_train, mre_val) = fit_hard!(mgr,xtrains,ytrain;vol_growth_computation_parameters=vol_growth_computation_parameters,max_train_attempts=max_train_attempts,acceptable_mre_val=acceptable_mre_val) # mre_train=0.36419346513945666, mre_val=0.3733832308165264
+    (success_flag, mre_train, mre_val) = fit_hard!(mgr,xtrains,ytrain,xvals,yval;vol_growth_computation_parameters=vol_growth_computation_parameters,max_train_attempts=max_train_attempts,acceptable_mre_val=acceptable_mre_val) # mre_train=0.36419346513945666, mre_val=0.3733832308165264
 
     #mre_train=0.364483301745215, mre_val=0.37536757162340695 and mre_test=0.39376201812761435
 
@@ -999,17 +1021,23 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
     CSV.write(joinpath(basefolder,"growth_model_xtrain.csv"),Tables.table(xtrain))
     CSV.write(joinpath(basefolder,"growth_model_xtrains.csv"),Tables.table(xtrains))
     CSV.write(joinpath(basefolder,"growth_model_ytrain.csv"),Tables.table(ytrain))
-    CSV.write(joinpath(basefolder,"growth_model_ŷtrain.csv"),Tables.table(ŷtrain))
+    CSV.write(joinpath(basefolder,"growth_model_yetrain.csv"),Tables.table(ŷtrain))
     CSV.write(joinpath(basefolder,"growth_model_xval.csv"),Tables.table(xval))
     CSV.write(joinpath(basefolder,"growth_model_xvals.csv"),Tables.table(xvals))
     CSV.write(joinpath(basefolder,"growth_model_yval.csv"),Tables.table(yval))
-    CSV.write(joinpath(basefolder,"growth_model_ŷval.csv"),Tables.table(ŷval))
+    CSV.write(joinpath(basefolder,"growth_model_yeval.csv"),Tables.table(ŷval)) # troubles in the FS to use the characters with UTF decorators
     CSV.write(joinpath(basefolder,"growth_model_xtest.csv"),Tables.table(xtest))
     CSV.write(joinpath(basefolder,"growth_model_xtests.csv"),Tables.table(xtests))
     CSV.write(joinpath(basefolder,"growth_model_ytest.csv"),Tables.table(ytest))
-    CSV.write(joinpath(basefolder,"growth_model_ŷtest.csv"),Tables.table(ŷtest))
-    
-
+    CSV.write(joinpath(basefolder,"growth_model_yetest.csv"),Tables.table(ŷtest))
+    CSV.write(joinpath(basefolder,"growth_model_xidstrain.csv"),Tables.table(xidstrain))
+    CSV.write(joinpath(basefolder,"growth_model_xidsval.csv"),Tables.table(xidsval))
+    CSV.write(joinpath(basefolder,"growth_model_xidstest.csv"),Tables.table(xidstest))
+    CSV.write(joinpath(basefolder,"growth_model_yidstrain.csv"),Tables.table(yidstrain))
+    CSV.write(joinpath(basefolder,"growth_model_yidsval.csv"),Tables.table(yidsval))
+    CSV.write(joinpath(basefolder,"growth_model_yidstest.csv"),Tables.table(yidstest))
+    CSV.write(joinpath(basefolder," growth_df.csv"), growth_df)
+   
     #JLD2.save(joinpath(basefolder,"vol_growth_computation_parameters.jld2", "vol_growth_computation_parameters", vol_growth_computation_parameters))
 
     return mgr
