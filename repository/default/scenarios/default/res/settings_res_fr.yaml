@@ -14,10 +14,11 @@ data_sources:
   soil_ph_url: "https://esdac.jrc.ec.europa.eu/wyz_856/_33_GSM/${VAR}_Extra.zip"
   soil_chem_url: "https://esdac.jrc.ec.europa.eu/public_path/shared_folder/dataset/60/${VAR}.zip"
   soil_oth_url: "https://esdac.jrc.ec.europa.eu/wyz_856/_24_DER/STU_EU_Layers.zip"
-  soil_ph_vars: ["Clay","Silt","Sand","CoarseFragments","BulkDensity","TextureUSDA","AWC"]
-  soil_chem_vars: ["pH_H2O","pH_CaCl","CEC","Caco3","CN","N","P","K","pH_H2O_ratio_Cacl"]
+  # Removing categorical `TextureUSDA` and `pH_H2O_ratio_Cacl` as the ae makes lot of errors for them
+  soil_ph_vars: ["Clay","Silt","Sand","CoarseFragments","BulkDensity","AWC"]
+  soil_chem_vars: ["pH_H2O","pH_CaCl","CEC","Caco3","CN","N","P","K"]
   soil_oth_vars: ["STU_EU_DEPTH_ROOTS", "STU_EU_T_CLAY", "STU_EU_S_CLAY", "STU_EU_T_SAND", "STU_EU_S_SAND", "STU_EU_T_SILT", "STU_EU_S_SILT", "STU_EU_T_OC", "STU_EU_S_OC", "STU_EU_T_BD", "STU_EU_S_BD", "STU_EU_T_GRAVEL", "STU_EU_S_GRAVEL", "SMU_EU_T_TAWC", "SMU_EU_S_TAWC", "STU_EU_T_TAWC", "STU_EU_S_TAWC"]
-  soil_texture_n_classes: 12
+  soil_texture_n_classes: 0 # original 12, but removed
   #admin_borders_sources: ["https://github.com/wmgeolab/geoBoundaries/raw/v6.0.0/releaseData/gbOpen/FRA/ADM1/geoBoundaries-FRA-ADM1.geojson?download="]
   admin_borders_sources: [
     "https://github.com/wmgeolab/geoBoundaries/raw/v6.0.0/releaseData/gbOpen/FRA/ADM1/geoBoundaries-FRA-ADM1.dbf?download=",
@@ -91,9 +92,9 @@ ign_data:
   nsample_v_imputation: 1000
 
 growth_model_training:
-  max_train_attempts: 200
-  acceptable_mre_val: 0.385 # 0.38
+  max_train_attempts: 50
+  acceptable_rme_val: 0.385 #0.385 # 0.38
   vol_growth_computation_adj_coeff: 0.001 # for comutational reasons to match orders of magnitude
-  n_models: 2
+  n_models: 110
 
 ftypes: ["br_HF", "br_COP", "br_MIX", "mixsp_HF", "mixsp_MIX", "con_HF"]

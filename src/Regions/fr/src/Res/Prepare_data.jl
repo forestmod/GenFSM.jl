@@ -18,7 +18,7 @@ function prepare_data!(settings, mask)
     res_growth_m    = train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduced)
     #res_mortality_m = train_mortality_model(settings, ign_state, ign_growth, xclimh_reduced, xfixedpx_reduced)
     #define_state(settings,mask)
-    # xclimf_reduced                  = predict_autoencoder_clim(settings, mask, scaler_clim_m, ae_clim_m)
+  
     settings["verbosity"] >= STD && @info("DONE preparing data for French region.")
 end
 
@@ -692,6 +692,7 @@ end
 
 
 function trainpredict_autoencode_fixedpxdata(settings, mask)
+    # function trainpredict_autoencode_fixedpxdata(settings, mask)
     # Note: we put together here both soil and elevation data.. perhaps it is better to separate them, as dtm is not really a soil variable, but rather a topographic variable, and the ae doesn't work supergood with it.
     verbosity = settings["verbosity"]
     verbosity >= GenFSM.STD && @info("- autoencoding px fixed data")
@@ -718,8 +719,8 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
     n_xnames  = length(xnames)
     nC,nR = size(mask)
     nx    = sum(mask)
-    nd_dtm  = length(keys(datafiles_dtm))
-    nd_soil = length(keys(datafiles_soil))
+    #nd_dtm  = length(keys(datafiles_dtm))
+    #nd_soil = length(keys(datafiles_soil))
     soil_texture_n_classes = settings["res"]["fr"]["data_sources"]["soil_texture_n_classes"]
 
     verbosity >= GenFSM.STD && @info(" -- creating xfixedpx df from raster files")
@@ -768,7 +769,7 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
 
     npx         = size(xfixedpx,1)
     train_ratio = min(ae_maxntrain/npx, 0.8)
-    verbosity >= GenFSM.HIGH && @info("    -- finished creating xfixedpx data. Number of pixels with missing values: $(n_problematic_px), number of pixels with no neighbour pixels: $(n_very_problematic_px), number of total pixels: $(ridx) ($(npx))")
+    verbosity >= GenFSM.HIGH && @info("    -- finished creating xfixedpx data. Number of pixels with missing values: $(n_problematic_px), number of pixels with no neighbour pixels: $(n_very_problematic_px), number of total pixels: $(ridx)")
 
     #=
     srows = StatsBase.sample(axes(xfixedpx, 1), ae_nsample,replace = false)
@@ -782,16 +783,16 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
     ((xtrain,xval),(trainids,valids)) = BetaML.partition([Matrix(xfixedpx[:,3:end]),hcat(1:npx)],[train_ratio,1-train_ratio])
 
     CSV.write(joinpath(basefolder,"xfixedpx.csv.gz"),xfixedpx;compress=true)
-    CSV.write(joinpath(basefolder,"xfixedpx_trainids.csv"),Tables.table(trainids))
-    CSV.write(joinpath(basefolder,"xfixedpx_valids.csv"),Tables.table(valids))
+    CSV.write(joinpath(basefolder,"xfixedpx_trainids.csv"),Tables.table(Int.(trainids)))
+    CSV.write(joinpath(basefolder,"xfixedpx_valids.csv"),Tables.table(Int.(valids)))
 
     ms    = BetaML.Scaler(cache=false,skip=1:soil_texture_n_classes) # skip to scale the categorical TextureUSDA category cols
 
-    BetaML.fit!(ms,xfixedpx[:,3:end]) # old: BetaML.fit!(ms,xtrain)
+    BetaML.fit!(ms,Matrix(xfixedpx[:,3:end])) # old: BetaML.fit!(ms,xtrain)
     BetaML.model_save(joinpath(basefolder,"ms_xfixedpx.jld2");ms)
     xtrains  = BetaML.predict(ms,xtrain)
 
-    ma    = BetaML.AutoEncoder(encoded_size=ae_encoded_size,layers_size=ae_hidden_layer_size,epochs=ae_base_nepochs,verbosity=BetaML.LOW, cache=false)
+    ma    = BetaML.AutoEncoder(encoded_size=ae_encoded_size,layers_size=ae_hidden_layer_size,epochs=ae_base_nepochs,verbosity=BetaML.STD, cache=false)
 
     last_mse_val = Inf
 
@@ -837,6 +838,20 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
     CSV.write(joinpath(basefolder,"xfixedpx_reduced.csv.gz"),xfixedpx_reduced;compress=true)
     BetaML.model_save(joinpath(basefolder,"ma_xfixedpx.jld2");ma)
 
+    # Saving errors..
+    x̂tots = BetaML.inverse_predict(ma,xtot_reduced)
+    x̂tot  = BetaML.inverse_predict(ms,x̂tots)
+    x̂fixedpx = hcat(xfixedpx[:,1:2],DataFrames.DataFrame(x̂tot,names(xfixedpx)[3:end]))
+
+    errs = vcat([ permutedims([
+        n,
+        StatsBase.mean(xfixedpx[:,n]),
+        BetaML.relative_mean_error(xfixedpx[:,n],x̂fixedpx[:,n]),
+        BetaML.mase(xfixedpx[:,n],x̂fixedpx[:,n])
+    ]) for n in names(xfixedpx)[3:end]]...,)
+    errsdf = DataFrames.DataFrame(errs,["var","mean","rme","mase"])
+    CSV.write(joinpath(basefolder,"xfixerpx_ae_errors.csv"),errsdf)
+
     return xfixedpx_reduced
 
 end
@@ -855,20 +870,25 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
     # - the climate var are those of y2
     # - the co2 is the average of the y1:y2 years
 
+    # -----------------------------------------------------------------------------
+    # Getting options....
+
     verbosity = settings["verbosity"]
     verbosity >= GenFSM.STD && @info("- training growth model..")
 
     force_ml_train = settings["res"]["fr"]["force_ml_train"]
-    basefolder     = joinpath(settings["res"]["fr"]["cache_path"],"forinv")
+    basefolder     = joinpath(settings["res"]["fr"]["cache_path"],"growth_model")
+    isdir(basefolder) || mkpath(basefolder)
     adj_coeff      = settings["res"]["fr"]["growth_model_training"]["vol_growth_computation_adj_coeff"]
     max_train_attempts = settings["res"]["fr"]["growth_model_training"]["max_train_attempts"]
-    acceptable_mre_val = settings["res"]["fr"]["growth_model_training"]["acceptable_mre_val"]
+    acceptable_rme_val = settings["res"]["fr"]["growth_model_training"]["acceptable_rme_val"]
+    n_models           = settings["res"]["fr"]["growth_model_training"]["n_models"]
 
     # if all needed files exists and no "xclim" in force_other, then returning the saved data
-    if (! ("growth" in force_ml_train)) && isfile(joinpath(basefolder,"growth_model.jld2"))
-        verbosity >= GenFSM.HIGH && @info(" -- loading growth model from saved file")
+    if (! ("growth" in force_ml_train)) && isfile(joinpath(basefolder,"growth_models.jld2")) && isfile(joinpath(basefolder,"growth_smodel.jld2"))
+        verbosity >= GenFSM.HIGH && @info(" -- loading growth models from saved file")
         #global vol_growth_computation_parameters = JLD2.load(joinpath(basefolder,"vol_growth_computation_parameters.jld2"),"vol_growth_computation_parameters")
-        return BetaML.model_load(joinpath(basefolder,"growth_model.jld2"),"mgr")
+        return BetaML.model_load(joinpath(basefolder,"growth_smodel.jld2")), BetaML.model_load(joinpath(basefolder,"growth_models.jld2")) 
     end
 
     ftypes    = settings["res"]["fr"]["ftypes"]
@@ -880,7 +900,12 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
     ae_encoded_size_cl = settings["res"]["fr"]["data_sources"]["clim"]["ae_encoded_size"]
     ae_encoded_size_px = settings["res"]["fr"]["px_fixed_data"]["ae_encoded_size"]
 
+    # ----------------------------------------------------------------------------
+    # Building the growth database (features)...
+
     growth_df = DataFrames.DataFrame(
+        "xid" => Array{Int64,1}(undef,nrecords),
+        "yid" => Array{Int64,1}(undef,nrecords),
         ["$f" => Array{Bool,1}(undef,nrecords) for f in ftypes]...,
         "x" => Array{Float64,1}(undef,nrecords),
         "y" => Array{Float64,1}(undef,nrecords),
@@ -894,42 +919,48 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
 
     # filling the growthdf with the data
     for (ir,r) in enumerate(eachrow(ign_growth))
+        xidx = r.xid                           
+        yidx = r.yid
         x = r.x
         y = r.y
         ft = vec(BetaML.predict(ohm, r.ftype))
-        xidx =r.xid                           
-        yidx = r.yid
         cl_data = xclimh_reduced[xclimh_reduced.C .== xidx .&& xclimh_reduced.R .== yidx .&& xclimh_reduced.Y .== r.y2, 4:end][1,:] # this already include the 5 years of the period considered
         pxfix_data = xfixedpx_reduced[xfixedpx_reduced.C .== xidx .&& xfixedpx_reduced.R .== yidx, 3:end][1,:]
         co2_conc = StatsBase.mean(co2_conc_h[co2_conc_h.years .>= r.y1 .&& co2_conc_h.years .<= r.y2, "co2_conc"]) # avg of the period
         v = (r.vHa2+r.vHaD+r.vHa1) / 2 # mean of the two observed periods, mortality included
         dt = r.y2 - r.y1
+        
+        # If I use this method I do correct in the early step of the logistic, but I go even more wrong in the late steps.
+        # Using the 5 mean increments, I do overestimate early stage growth and underestimate late stages of the logistic
+        # Filtering out too young plots helps keep this bias to a minimum.
         dv_rate =  ((r.vHa2 + r.vHaD)/ r.vHa1)    ^(1 / dt) - 1  # mortality included
         ydv = dv_rate * v
-        growth_df[ir,:] = [ft...,x,y,cl_data...,co2_conc,pxfix_data...,v,ydv]
+        # If I use this computation I got too crazy values for carrying capacity as the model doesn't bench
+        # ydv = (r.vHa2 + r.vHaD - r.vHa1) / dt
+        growth_df[ir,:] = [xidx, yidx,ft...,x,y,cl_data...,co2_conc,pxfix_data...,v,ydv]
     end
+    CSV.write(joinpath(basefolder,"growth_df.csv"), growth_df)
 
-    x =  Matrix(growth_df[:,1:end-1])
+    x =  Matrix(growth_df[:,3:end-1])
     y =  growth_df[:,end]
-    xids = ign_growth.xid
-    yids = ign_growth.yid
-    ((xtrain,xval,xtest),(ytrain,yval,ytest),(xidstrain,xidsval,xidstest),(yidstrain,yidsval,yidstest)) = BetaML.partition([x,y,xids,yids],[0.75,0.2,0.05])
 
-    nR,nd =  size(xtrain)
+    # ----------------------------------------------------------------------------
+    # Scaling...
 
     ms      = BetaML.Scaler(skip=1:nftypes) # skip=1:nftypes
-    BetaML.fit!(ms, xtrain)
+    BetaML.fit!(ms, x)
     # hack needed because the insample co2 conc range in somehting like [350,400], but the future one goes to over 1000, if scaled only based on historical then crazy values are predicted
     co2conc_position = nftypes+ae_encoded_size_cl+3
     BetaML.parameters(ms).scalerpars.sfμ[co2conc_position]=0
     BetaML.parameters(ms).scalerpars.sfσ[co2conc_position]=0.0005
-    xtrains  = BetaML.predict(ms,xtrain)
-    xvals    = BetaML.predict(ms,xval)
-    xtests   = BetaML.predict(ms,xtest)
     vscp1    = BetaML.parameters(ms).scalerpars.sfμ[end]
     vscp2    = BetaML.parameters(ms).scalerpars.sfσ[end]
-
     vol_growth_computation_parameters = (vol_sc_par_mu=vscp1, vol_sc_par_sd=vscp2, adj_coeff=adj_coeff)
+    nd = size(x,2)
+    BetaML.model_save(joinpath(basefolder,"growth_smodel.jld2");ms)
+
+    # ----------------------------------------------------------------------------
+    # Model definition...
 
     # Nonlinear Model: NN with constraints
     # Note Logistic model:
@@ -941,43 +972,51 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
     # We should instead parametrize the logistic using the parameter Vdotmax (itself equal to ab/4) instead of a in order to get the two parameters uncorrelated. 
     # I can check with syntetic data, as in reality the network doesn't try to search for the parameters, it try to minimize the distance with observed dotV
 
-    l1_ab  = BetaML.DenseLayer(nd-1,Int(round(1.5*(nd-1))),f=BetaML.relu)
-    l1_v   = BetaML.ReplicatorLayer(1)
-    l1     = BetaML.GroupedLayer([l1_ab,l1_v])
-    l2_ab  = BetaML.DenseLayer(Int(round(1.5*(nd-1))),Int(round(1.5*(nd-1))),f=BetaML.relu)
-    l2_v   = BetaML.ReplicatorLayer(1)
-    l2     = BetaML.GroupedLayer([l2_ab,l2_v])
-    l3_ab  = BetaML.DenseLayer(Int(round(1.5*(nd-1))),2,f=BetaML.relu)
-    l3_v   = BetaML.ReplicatorLayer(1)
-    l3     = BetaML.GroupedLayer([l3_ab,l3_v])
-    l4     = BetaML.VectorFunctionLayer(3,f=Base.Fix2(vol_growth_computation,vol_growth_computation_parameters))
-    layers = [l1,l2,l3,l4]
-    mgr    = BetaML.NeuralNetworkEstimator(epochs=20, batch_size=16, layers=layers, fail_attempts=30)
+    l1_ab   = BetaML.DenseLayer(nd-1,Int(round(1.5*(nd-1))),f=BetaML.relu)
+    l1_v    = BetaML.ReplicatorLayer(1)
+    l1      = BetaML.GroupedLayer([l1_ab,l1_v])
+    l2_ab   = BetaML.DenseLayer(Int(round(1.5*(nd-1))),Int(round(1.5*(nd-1))),f=BetaML.relu)
+    l2_v    = BetaML.ReplicatorLayer(1)
+    l2      = BetaML.GroupedLayer([l2_ab,l2_v])
+    l3_ab   = BetaML.DenseLayer(Int(round(1.5*(nd-1))),2,f=BetaML.relu)
+    l3_v    = BetaML.ReplicatorLayer(1)
+    l3      = BetaML.GroupedLayer([l3_ab,l3_v])
+    l4      = BetaML.VectorFunctionLayer(3,f=Base.Fix2(GenFSM.Res_fr.vol_growth_computation,vol_growth_computation_parameters))
+    layers  = [l1,l2,l3,l4]
+    mgr_tpl = BetaML.NeuralNetworkEstimator(epochs=20, batch_size=16, layers=layers, fail_attempts=30, fail_epoch_ref=1, fail_epoch=4)
+
+    partfile   = joinpath(basefolder,"growth_models_partitioned_px.csv")
+    errorsfile = joinpath(basefolder,"growth_models_errors.csv")
+    write(partfile, "mid,pxid,set\n")
+    write(errorsfile, "mid,success,nattempts,rme_train,rme_val,rme_test,mase_train,mase_val,mase_test\n")
+
+    # ----------------------------------------------------------------------------
+    # Train function definition...
 
     # Train the model.. several attempts are made as sometimes (..often..) the model either doesn't converge or is linear
     # The model is considered linear if the b parameter is too high (i.e. > 2e6)
-    # The model is considered converged if the relative mean error on the test set is below acceptable_mre_val
+    # The model is considered converged if the relative mean error on the test set is below acceptable_rme_val
     # The model is reset and reinitialized if it doesn't converge or is linear
     # Note that the training lukely is quite bipolar: either it converge to a linear model or it converge to a "rreasonable" nonlinear model.
-    function fit_hard!(mgr,xtrains,ytrain,xvals,yval;vol_growth_computation_parameters,verbosity=GenFSM.STD,max_train_attempts=30,acceptable_mre_val=0.5)
+    function fit_hard!(mgr,xtrains,ytrain,xvals,yval;vol_growth_computation_parameters,verbosity=GenFSM.STD,max_train_attempts=30,acceptable_rme_val=0.5)
         success = false
         attempt = 1
-        mre_train = Inf
-        mre_val  = Inf
+        rme_train = Inf
+        rme_val  = Inf
         # First training...
         while !success
             verbosity >= GenFSM.LOW && @info "*** Training constrained model attempt $(attempt)..."
-            ŷtrain   = BetaML.fit!(mgr, xtrains, ytrain)
-            ŷval    = BetaML.predict(mgr,xvals)
-            mre_train = BetaML.relative_mean_error(ytrain,ŷtrain)
-            mre_val  = BetaML.relative_mean_error(yval,ŷval)
-            js = rand(1:size(xtrains,1),3)
-            if mre_val < acceptable_mre_val
-                verbosity >= GenFSM.STD && @info "Growth model found a solution with mre_train=$(mre_train) and mre_val=$(mre_val). Let's check it is not linear..."
+            ŷtrain     = BetaML.fit!(mgr, xtrains, ytrain)
+            ŷval       = BetaML.predict(mgr,xvals)
+            rme_train  = BetaML.relative_mean_error(ytrain,ŷtrain)
+            rme_val    = BetaML.relative_mean_error(yval,ŷval)
+            js = rand(1:size(xtrains,1),5)
+            if rme_val < acceptable_rme_val
+                verbosity >= GenFSM.STD && @info "Growth model found a solution with rme_train=$(rme_train) and rme_val=$(rme_val). Let's check it is not linear..."
                 linear = false
                 for j in js
                     r = xtrains[j,:]
-                    (aj,bj,vj,dvj) = vol_growth_computation_get_coefficients(mgr,r;adj_coeff=vol_growth_computation_parameters.adj_coeff)
+                    (aj,bj,vj,dvj) = GenFSM.Res_fr.vol_growth_computation_get_coefficients(mgr,r;adj_coeff=vol_growth_computation_parameters.adj_coeff)
                     verbosity >= GenFSM.STD && @info "b parameter: $bj"
                     if abs(bj) > 2e6 
                     linear = true
@@ -988,7 +1027,7 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
                     success = true
                 end
             else
-                verbosity >= GenFSM.STD && @info "Growth model mre_val=$(mre_val) is not acceptable (max acceptable is $(acceptable_mre_val)). Let's try again..."
+                verbosity >= GenFSM.STD && @info "Growth model rme_val=$(rme_val) is not acceptable (max acceptable is $(acceptable_rme_val)). Let's try again..."
             end
             if !success 
                 verbosity >= GenFSM.STD && @info "going to reset the model and try again..."
@@ -996,51 +1035,71 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
                 BetaML.Nn.random_init!.(BetaML.hyperparameters(mgr).layers)
             end
             if attempt > max_train_attempts
-                verbosity >= GenFSM.LOW && @error("Growth model failed to find a solution after $attempt attempts.")
-                return (success,mre_train, mre_val)
+                verbosity >= GenFSM.LOW && @error "Growth model failed to find a solution after $attempt attempts."
+                return (success,attempt,rme_train, rme_val)
             end
             attempt += 1
         end
-        return (success,mre_train, mre_val)
+        return (success,attempt,rme_train, rme_val)
     end
 
-    (success_flag, mre_train, mre_val) = fit_hard!(mgr,xtrains,ytrain,xvals,yval;vol_growth_computation_parameters=vol_growth_computation_parameters,max_train_attempts=max_train_attempts,acceptable_mre_val=acceptable_mre_val) # mre_train=0.36419346513945666, mre_val=0.3733832308165264
+    # ----------------------------------------------------------------------------
+    # Starting the loop over many different models...
 
-    #mre_train=0.364483301745215, mre_val=0.37536757162340695 and mre_test=0.39376201812761435
+    n_successes = 0
+    for jm in 1:n_models
+        #jm = 3
+        verbosity >= GenFSM.LOW && @info "*********************\n*** Training j model $(jm)..."
+    
+        # ------------------------------------------------------------------------
+        # [InLoop] Data partitioning and scaling...
 
-    success_flag || error("Growth model training failed after several attempts. Consider changing the parameters or the data.")
-    ŷtrain   = BetaML.predict(mgr, xtrains)
-    ŷval     = BetaML.predict(mgr,xvals)
-    ŷtest    = BetaML.predict(mgr,xtests)
-    mre_test = BetaML.relative_mean_error(ytest,ŷtest)
+        ((xtrain,xval,xtest),(ytrain,yval,ytest),(ids_train,ids_val,ids_test)) = BetaML.partition([x,y,1:size(x,1)],[0.75,0.2,0.05])
+        (ntrain,nval,ntest) =  size.([xtrain,xval,xtest],1)
+        CSV.write(partfile,Tables.table(hcat(fill(jm,ntrain),ids_train,fill("train",ntrain)));append=true)
+        CSV.write(partfile,Tables.table(hcat(fill(jm,nval),ids_val,fill("val",nval)));append=true)
+        CSV.write(partfile,Tables.table(hcat(fill(jm,ntest),ids_test,fill("test",ntest)));append=true)
+        xtrains  = BetaML.predict(ms,xtrain)
+        xvals    = BetaML.predict(ms,xval)
+        xtests   = BetaML.predict(ms,xtest)
 
-    verbosity >= GenFSM.STD && @info "Growth model trained with mre_train=$(mre_train), mre_val=$(mre_val) and mre_test=$(mre_test). Saving the model."
+        # ------------------------------------------------------------------------
+        # [InLoop] Model j instantialization, reset and train...
+        mgr = deepcopy(mgr_tpl)
+        BetaML.reset!(mgr)
+        BetaML.Nn.random_init!.(BetaML.hyperparameters(mgr).layers)
 
-    BetaML.model_save(joinpath(basefolder,"growth_model.jld2");mgr=mgr)
-    BetaML.model_save(joinpath(basefolder,"growth_model_scalar_model.jld2");ms=ms)
-    CSV.write(joinpath(basefolder,"growth_model_xtrain.csv"),Tables.table(xtrain))
-    CSV.write(joinpath(basefolder,"growth_model_xtrains.csv"),Tables.table(xtrains))
-    CSV.write(joinpath(basefolder,"growth_model_ytrain.csv"),Tables.table(ytrain))
-    CSV.write(joinpath(basefolder,"growth_model_yetrain.csv"),Tables.table(ŷtrain))
-    CSV.write(joinpath(basefolder,"growth_model_xval.csv"),Tables.table(xval))
-    CSV.write(joinpath(basefolder,"growth_model_xvals.csv"),Tables.table(xvals))
-    CSV.write(joinpath(basefolder,"growth_model_yval.csv"),Tables.table(yval))
-    CSV.write(joinpath(basefolder,"growth_model_yeval.csv"),Tables.table(ŷval)) # troubles in the FS to use the characters with UTF decorators
-    CSV.write(joinpath(basefolder,"growth_model_xtest.csv"),Tables.table(xtest))
-    CSV.write(joinpath(basefolder,"growth_model_xtests.csv"),Tables.table(xtests))
-    CSV.write(joinpath(basefolder,"growth_model_ytest.csv"),Tables.table(ytest))
-    CSV.write(joinpath(basefolder,"growth_model_yetest.csv"),Tables.table(ŷtest))
-    CSV.write(joinpath(basefolder,"growth_model_xidstrain.csv"),Tables.table(xidstrain))
-    CSV.write(joinpath(basefolder,"growth_model_xidsval.csv"),Tables.table(xidsval))
-    CSV.write(joinpath(basefolder,"growth_model_xidstest.csv"),Tables.table(xidstest))
-    CSV.write(joinpath(basefolder,"growth_model_yidstrain.csv"),Tables.table(yidstrain))
-    CSV.write(joinpath(basefolder,"growth_model_yidsval.csv"),Tables.table(yidsval))
-    CSV.write(joinpath(basefolder,"growth_model_yidstest.csv"),Tables.table(yidstest))
-    CSV.write(joinpath(basefolder," growth_df.csv"), growth_df)
-   
-    #JLD2.save(joinpath(basefolder,"vol_growth_computation_parameters.jld2", "vol_growth_computation_parameters", vol_growth_computation_parameters))
+        (success_flag, nattempts, rme_train, rme_val) = fit_hard!(mgr,xtrains,ytrain,xvals,yval;vol_growth_computation_parameters=vol_growth_computation_parameters,max_train_attempts=max_train_attempts,acceptable_rme_val=acceptable_rme_val) # rme_train=0.36419346513945666, rme_val=0.3733832308165264
 
-    return mgr
+        #rme_train=0.364483301745215, rme_val=0.37536757162340695 and rme_test=0.39376201812761435
+
+        # ------------------------------------------------------------------------
+        # [InLoop] Model error assessment & saving...
+        if success_flag
+            n_successes += 1
+            ŷtrain     = BetaML.predict(mgr,xtrains)
+            ŷval       = BetaML.predict(mgr,xvals)
+            ŷtest      = BetaML.predict(mgr,xtests)
+            rme_test   = BetaML.relative_mean_error(ytest,ŷtest)
+            mase_train = BetaML.mase(ytrain,ŷtrain)
+            mase_val   = BetaML.mase(yval,ŷval)
+            mase_test  = BetaML.mase(ytest,ŷtest)
+            verbosity >= GenFSM.STD && @info "Growth model $(jm) trained with rme_train=$(rme_train), rme_val=$(rme_val) and rme_test=$(rme_test). Saving the model."
+            open(errorsfile, "a") do f
+                write(f, "$(jm),$(success_flag),$(nattempts),$(rme_train),$(rme_val),$(rme_test),$(mase_train),$(mase_val),$(mase_test)\n")
+            end
+            modname = "mgr_$jm"
+            overrite_model_file = (n_successes == 1) ? true : false
+            BetaML.model_save(joinpath(basefolder,"growth_models.jld2"),overrite_model_file;Symbol(modname) => mgr)
+
+        else
+            @error "Growth model $(jm) training failed after $(max_train_attempts) attempts."
+            (rme_train,rme_val,rme_test,mase_train,mase_val,mase_test) = (missing,missing,missing,missing,missing,missing)
+        end
+
+    end
+
+    return BetaML.model_load(joinpath(basefolder,"growth_smodel.jld2")),BetaML.model_load(joinpath(basefolder,"growth_models.jld2")) 
 end
 
 function define_state(settings, mask)
