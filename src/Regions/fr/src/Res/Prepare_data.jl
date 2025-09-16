@@ -10,12 +10,12 @@ function prepare_data!(settings, mask)
     xclimh_reduced, scaler_clim_m, ae_clim_m  = train_autoencode_clim(settings, mask, ign_growth)
     xclimf_reduced   = GenFSM.Res_fr.predict_autoencoder_clim(settings, mask, scaler_clim_m, ae_clim_m)
     scaler_clim_m, ae_clim_m = nothing, nothing # removing the climatic ae models from memory, as they are not needed anymore
-    # Filtering out x,y that are not in the mask (yes, it could have been done earlier..)
-    xclimh_reduced = xclimh_reduced[getindex.(Ref(mask),xclimh_reduced.C,xclimh_reduced.R) .== 1,:]
-    xclimf_reduced = xclimf_reduced[getindex.(Ref(mask),xclimf_reduced.C,xclimf_reduced.R) .== 1,:]
+    # Filtering out x,y that are not in the mask (yes, it could have been done earlier..) NO LONGER NEEDEED
+    #xclimh_reduced = xclimh_reduced[getindex.(Ref(mask),xclimh_reduced.C,xclimh_reduced.R) .== 1,:]
+    #xclimf_reduced = xclimf_reduced[getindex.(Ref(mask),xclimf_reduced.C,xclimf_reduced.R) .== 1,:]
     xfixedpx_reduced       = trainpredict_autoencode_fixedpxdata(settings, mask) # dtm and soil
 
-    res_growth_m    = train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduced)
+    sm,mgrs         = GenFSM.Res_fr.train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduced)
     #res_mortality_m = train_mortality_model(settings, ign_state, ign_growth, xclimh_reduced, xfixedpx_reduced)
     #define_state(settings,mask)
   
@@ -529,7 +529,8 @@ function train_autoencode_clim(settings, mask, ign_growth)
     ae_encoded_size = settings["res"]["fr"]["data_sources"]["clim"]["ae_encoded_size"]
     verbosity = settings["verbosity"]
     nC,nR     = size(mask)
-    nxclimh   = nC*nR*(length(hyears)-ae_nyears+1)
+    #nxclimh   = nC*nR*(length(hyears)-ae_nyears+1)
+    nxclimh   = sum(mask)*(length(hyears)-ae_nyears+1)
   
     if (! ("xclimh" in force_other)) && (isfile(joinpath(basefolder,"xclimh.csv.gz")))
         verbosity >= STD && @info(" -- reading xclimh df from saved CSV file")
@@ -548,6 +549,7 @@ function train_autoencode_clim(settings, mask, ign_growth)
           verbosity > HIGH && @info("    -- creating xclimh data for year: $y")
           for c in 1:nC
               for r in 1:nR
+                    mask[c,r] == 1 || continue # skip pixels outside the mask
                     xclimh[ridx,[1,2,3]] .= [c,r,y]
                     cidx = 4
                     for v in vars
@@ -650,7 +652,8 @@ function predict_autoencoder_clim(settings, mask, scaler_clim_m, ae_clim_m)
     vars      = settings["res"]["fr"]["data_sources"]["clim"]["vars"]
     verbosity = settings["verbosity"]
     nC,nR     = size(mask)
-    nxclimf  = nC*nR*(length(fyears))
+    #nxclimf  = nC*nR*(length(fyears))
+    nxclimf   = sum(mask)*(length(fyears))
     ae_encoded_size = settings["res"]["fr"]["data_sources"]["clim"]["ae_encoded_size"]
 
     xnames_h   = collect(keys(datafiles_h))
@@ -665,6 +668,7 @@ function predict_autoencoder_clim(settings, mask, scaler_clim_m, ae_clim_m)
     verbosity >= HIGH && @info("    -- creating xclimf_reduced data for year: $y")
     for c in 1:nC
         for r in 1:nR
+                mask[c,r] == 1 || continue # skip pixels outside the mask
                 cidx = 1
                 clim_data_y_px = Array{Float64,1}(undef,ae_nyears*12*length(vars))
                 for v in vars
