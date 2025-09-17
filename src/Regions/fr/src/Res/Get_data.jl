@@ -87,7 +87,7 @@ function get_dtm(settings,mask)
     to               = mask
     filename         = basename(url)
     verbosity        = settings["verbosity"]
-    verbose          = verbosity in [HIGH, FULL] 
+    verbose          = verbosity in [GenFSM.HIGH, GenFSM.FULL] 
     zip_destpath     = joinpath(data_path,filename)
     tif_destpath     = replace(zip_destpath,".zip" => ".tif")
     tif_destpath_reg = replace(tif_destpath,".tif" => "_reg.tif")
@@ -105,7 +105,7 @@ function get_dtm(settings,mask)
     end
     verbose && @info "Downloading dtm file..."
     Downloads.download(url,zip_destpath, verbose=verbose)
-    unzip(zip_destpath,data_path)
+    GenFSM.Res_fr.unzip(zip_destpath,data_path)
     sr            = settings["simulation_region"]
     crs           = convert(Rasters.WellKnownText, Rasters.EPSG(sr["cres_epsg_id"]))
     lon, lat      = Rasters.X(sr["x_lb"]:(sr["xres"]/4):sr["x_ub"]), Rasters.Y(sr["y_lb"]:(sr["yres"]/4):sr["y_ub"])
@@ -114,7 +114,7 @@ function get_dtm(settings,mask)
     dtm_w         = Rasters.Raster(tif_destpath)
     dtm_reg_hr    = Rasters.resample(dtm_w,to=mask_hr,method=:average)
     dtm_reg       = Rasters.resample(dtm_w,to=to,method=:average)
-    M             = convert(Matrix{Float32},dtm_reg_hr[:,:])
+    M             = map(i-> ismissing(i) ? Float32(0) : Float32(i), Matrix(dtm_reg_hr[:,:])) # replacing missing (sea only at this point) with zeros. Needed for slope computation
     slope         = Geomorphometry.slope(M)
     aspect        = Geomorphometry.aspect(M)
     tri           = Geomorphometry.TRI(M)
