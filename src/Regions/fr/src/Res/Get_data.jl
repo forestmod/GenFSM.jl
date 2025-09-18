@@ -73,6 +73,10 @@ function make_reg_res_mask(settings,mask)
     #Rasters.metadata(reg_raster)["missed_geometries"]
 
     resampled_raster = Rasters.resample(reg_raster,to=mask,method=:average)
+    # this solves the problem that 0 is signaled as missingval, but is instead real 0/false
+    resampled_raster = Rasters.replace_missing(resampled_raster, missingval=-9999) 
+    resampled_raster = map(i -> i == -9999 ? 0 : 1, resampled_raster[:,:])
+    
     write(mask_destpath, resampled_raster ,force=true)
     rm(adm_borders_dl_path,recursive=true)
     return mask_destpath

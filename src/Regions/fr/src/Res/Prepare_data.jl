@@ -499,6 +499,7 @@ end
 
 
 function train_autoencode_clim(settings, mask, ign_growth)
+    @random_seed!
     # This function trains the autoencoder for climatic data
     # It returns the autoencoded climatic data.
 
@@ -632,7 +633,7 @@ end
 
 
 function predict_autoencoder_clim(settings, mask, scaler_clim_m, ae_clim_m)
-
+    @random_seed!
     settings["verbosity"] >= STD && @info("- predicting autoencoded future climatic data for scenario $(settings["scenario"])")
 
     force_other    = settings["res"]["fr"]["force_other"]
@@ -697,6 +698,7 @@ end
 
 
 function trainpredict_autoencode_fixedpxdata(settings, mask)
+    @random_seed!
     # function trainpredict_autoencode_fixedpxdata(settings, mask)
     # Note: we put together here both soil and elevation data.. perhaps it is better to separate them, as dtm is not really a soil variable, but rather a topographic variable, and the ae doesn't work supergood with it.
     verbosity = settings["verbosity"]
@@ -874,6 +876,8 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
     # - dv is computed, for the observed years, as finding first i from the v2=v1(1+i)^5 eq and then multiplying it to v3
     # - the climate var are those of y2
     # - the co2 is the average of the y1:y2 years
+
+    @random_seed!
 
     # -----------------------------------------------------------------------------
     # Getting options....
@@ -1110,4 +1114,5 @@ end
 function define_state(settings, mask)
     # This function defines the state of the region based on the prepared data
     # It is called after the growth model has been trained.
+    @random_seed!
 end

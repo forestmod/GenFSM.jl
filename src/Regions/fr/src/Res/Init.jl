@@ -21,8 +21,8 @@ function _init!!(pixels,settings,global_mask)
     isdir(cache_path) || mkpath(cache_path)
     isdir(output_path) || mkpath(output_path)
     settings["res"]["fr"]["mask"] = make_reg_res_mask(settings,global_mask)
-    reg_res_mask = Rasters.Raster(settings["res"]["fr"]["mask"])
-
+    reg_res_mask = Rasters.Raster(settings["res"]["fr"]["mask"]) # still the inner matrix is an Union{Missing,Int62}
+    reg_res_mask = map(i -> i == 0 ? 0 : 1, reg_res_mask[:,:])
     get_data!(settings,reg_res_mask)
     #println(settings)
     
