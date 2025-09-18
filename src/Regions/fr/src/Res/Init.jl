@@ -7,7 +7,7 @@ Initialization function of the `Res` module for the French region
 
     
 """
-function _init!!(pixels,settings,overal_region_mask)
+function _init!!(pixels,settings,global_mask)
 
     println("Hello in Res_fr.init!!")
     
@@ -20,10 +20,10 @@ function _init!!(pixels,settings,overal_region_mask)
     isdir(temp_path) || mkpath(temp_path)
     isdir(cache_path) || mkpath(cache_path)
     isdir(output_path) || mkpath(output_path)
-    settings["res"]["fr"]["mask"] = get_mask(settings,overal_region_mask)
-    mask = Rasters.Raster(settings["res"]["fr"]["mask"])
+    settings["res"]["fr"]["mask"] = make_reg_res_mask(settings,global_mask)
+    reg_res_mask = Rasters.Raster(settings["res"]["fr"]["mask"])
 
-    get_data!(settings,mask)
+    get_data!(settings,reg_res_mask)
     #println(settings)
     
     # Download the data:
@@ -35,6 +35,6 @@ function _init!!(pixels,settings,overal_region_mask)
     #- DONE Climate
     # Maybe TODO: accessibility index
    
-    prepare_data!(settings,mask)
+    prepare_data!(settings,reg_res_mask)
     
 end

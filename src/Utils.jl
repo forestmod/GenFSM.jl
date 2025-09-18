@@ -31,3 +31,30 @@ function to_dict(df::DataFrames.AbstractDataFrame, dim_cols, value_cols)
     end
     return to_return
 end
+
+"""
+
+$(TYPEDSIGNATURES)
+
+Seed the global random seed to a mix given an hash from the Module.function name and the global random seed.
+In this way each, the random flows in each function that call this macro at the beginnin remain unrelated ot the other ones, but provided the yeaml-read `global_random_seed` (and julia verison), the flow remains the same.
+
+
+"""
+macro random_seed!()
+    return quote
+        st = stacktrace(backtrace())
+        myf = ""
+        for frm in st
+            funcname = frm.func
+            if frm.func != :backtrace && frm.func!= Symbol("macro expansion")
+                myf = frm.func
+                break
+            end
+        end
+        m1 = $("$(__module__)")
+        s = m1 * "$(myf)"
+        Random.seed!(hash("$s",UInt64(global_random_seed)))
+        GenFSM.verbosity >= HIGH && @info "Random seeded with hash of \"$s\" and $(global_random_seed)"
+    end
+end

@@ -1,7 +1,7 @@
 
 module Res_fr
 import ..GenFSM
-import ..GenFSM: NONE,LOW,STD,HIGH,FULL
+import ..GenFSM: NONE,LOW,STD,HIGH,FULL, @random_seed!
 import ..GenFSM.Res
 
 using DocStringExtensions, Dates
@@ -11,6 +11,7 @@ import StatsBase
 import DataStructures: OrderedDict
 import Pipe: @pipe
 import HTTP
+import NCDatasets
 import ArchGDAL, Rasters, ZipFile, DataStructures # , FTPClient
 import Geomorphometry # for slope and aspect 
 import Shapefile
@@ -34,7 +35,7 @@ include(joinpath("Res","Prepare_data.jl"))
 include(joinpath("Res","Init.jl"))
 
 """
-    Res.init!!(::Val{:fr},pixels,settings,overal_region_mask)
+    Res.init!!(::Val{:fr},pixels,settings,global_mask)
 
 Wrapper function to call the initialization function for the French region.
 
@@ -45,8 +46,8 @@ Res.init!!() --> init!!(Val(reg_xx)),...) --> Res_xx._init!!()
 Note that this function is injected to the `Res` module, but it is defined in the `Res_fr` module (file `fr.jl``)
 
 """
-function Res.init!!(::Val{:fr},pixels,settings,overal_region_mask)
-    Res_fr._init!!(pixels,settings,overal_region_mask)
+function Res.init!!(::Val{:fr},pixels,settings,global_mask)
+    Res_fr._init!!(pixels,settings,global_mask)
 end
 
 

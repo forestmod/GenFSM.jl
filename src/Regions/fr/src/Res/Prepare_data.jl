@@ -1,6 +1,7 @@
 # Prepare the data for the French Rres_fr module.
 
 function prepare_data!(settings, mask)
+    @random_seed!
     settings["verbosity"] >= GenFSM.LOW && @info("Preparing res data for the French region.")
     # This function prepares the data for the French region.
     # It is called after the data has been downloaded and layers saved as tiff.
@@ -71,7 +72,7 @@ gov: government HF,MIX,COP
 
 """
 function prepare_ign_data(settings, mask )
- 
+    @random_seed!
     verbosity = settings["verbosity"]
 
     # This function prepares the IGN data for the French region

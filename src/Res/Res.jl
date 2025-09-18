@@ -62,12 +62,12 @@ Delegate pixel initialization to each Res region.
 Res.init!!() --> init!!(Val(reg_xx)),...) --> Res_xx._init!!()
 
 """
-function init!!(pixels,settings,raster_mask)
+function init!!(pixels,settings,global_mask)
 
     resources_regions = settings["res"]["regions"]
 
     for (ir, reg) in enumerate(resources_regions)    
-        init!!(Val(Symbol(reg)),pixels,settings,raster_mask)
+        init!!(Val(Symbol(reg)),pixels,settings,global_mask)
     end
 
 end

@@ -34,7 +34,14 @@ end
 # ------------------------------------------------------------------------------
 # Specific download functions
 
-function get_mask(settings,mask)
+"""
+
+$(TYPEDSIGNATURES)
+
+Make (and return the path) the regional resource mask from administrative borders (that are downloaded)
+
+"""
+function make_reg_res_mask(settings,mask)
     force          = "adm_borders" in settings["res"]["fr"]["force_download"]
     verbosity      = settings["verbosity"]
     verbose        = verbosity >= HIGH
@@ -203,12 +210,16 @@ function get_soil_data(settings,mask)
         rm(zipfolder,recursive=true)
     end
 
+    
     # Special: for TextureUSDA we extract the class as boolean values, as this is categorical
-    soil_texture_classes = 1:soil_texture_n_classes
-    texture_filename = joinpath(soil_path,"TextureUSDA_reg.tif")
-    texture_classes = expand_classes(texture_filename,soil_texture_classes;verbose=verbose,force=force,to=nothing)
-    delete!(soil_vars,"TextureUSDA")
-    soil_vars = DataStructures.OrderedDict(texture_classes...,soil_vars...)
+    if soil_texture_n_classes > 0
+        soil_texture_classes = 1:soil_texture_n_classes
+        texture_filename = joinpath(soil_path,"TextureUSDA_reg.tif")
+        texture_classes = expand_classes(texture_filename,soil_texture_classes;verbose=verbose,force=force,to=nothing)
+        delete!(soil_vars,"TextureUSDA")
+        soil_vars = DataStructures.OrderedDict(texture_classes...,soil_vars...)
+    end
+    
 
     # Other soil variables
     urlname   = soil_oth_url
@@ -258,7 +269,7 @@ function get_clc(settings,mask)
     isdir(clc_dldirpath) || mkpath(clc_dldirpath)
     Downloads.download(clc_url,clc_dlpath)
     clc_df  = GeoDataFrames.read(clc_dlpath)
-    DataFrames.rename!(clc_df,"Shape" => "geometry")
+    # DataFrames.rename!(clc_df,"Shape" => "geometry") # no longer needed
     clc_bfor = clc_df[clc_df.Code_18 .== "311",:]
     clc_cfor = clc_df[clc_df.Code_18 .== "312",:]
     clc_mfor = clc_df[clc_df.Code_18 .== "313",:]
@@ -561,6 +572,8 @@ function get_inventory_data(settings,mask)
     mv(forinv_unzippeddir,forinv_dirpath,force=true)
     points = CSV.read(forinv_data["points"],DataFrames.DataFrame)
     trans = Proj.Transformation("EPSG:$(forest_inventory_crs)", "EPSG:$(settings["simulation_region"]["cres_epsg_id"])", always_xy=true)   
+    points.XL = convert(Array{Float64,1},points.XL)
+    points.YL = convert(Array{Float64,1},points.YL)
     for p in eachrow(points)
       (X,Y) = trans(p.XL,p.YL)
       p.XL = X

@@ -1,7 +1,7 @@
 # General settings
 
-# Definition of the region under simulation
-# This values cover France only
+# Definition of the overall region under simulation
+# In this project, this values cover France only
 # Check conversion on https://epsg.io/transform
 # Apply conversion using the `Proj` package:
 # using Proj

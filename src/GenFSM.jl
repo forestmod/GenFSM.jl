@@ -17,6 +17,8 @@ import DataFrames
 export Verbosity, NONE, LOW, STD, HIGH, FULL
 export runsim
 
+global_random_seed = 999 # actual global seed is then read from the YAML file
+verbosity = nothing
 
 include("Utils.jl")
 
@@ -34,6 +36,8 @@ include("Regions/fr/src/fr.jl")
 const SLOAD = ScenarioLoader
 const RES   = Res
 
+
+
 """
     run(project,scenario;override)
 
@@ -47,18 +51,21 @@ Run a scenario of GenFSM
 function runsim(project="default",scenario="default";override=Dict{Any,Any}())
 
     settings = SLOAD.load_full_settings(project,scenario,override=override)
-    Random.seed!(settings["random_seed"])
+    
+    GenFSM.global_random_seed = settings["random_seed"]
+    Random.seed!(GenFSM.global_random_seed)
+    GenFSM.verbosity = settings["verbosity"]
 
     region = settings["simulation_region"]
     resources_regions = settings["res"]["regions"]
     # first get the raster map and the unistialized pixels
     # This is the global region mask, and it is always rectangular.
     # Then individual resource or market models can have their own masks
-    raster_mask = RES.make_raster_mask(region)
+    global_mask = RES.make_global_mask(region)
     pixels      = RES.make_pixels(settings["res"]["nft"],settings["res"]["ndc"],region["nx"],region["ny"])
 
 
-    RES.init!!(pixels,settings,raster_mask)
+    RES.init!!(pixels,settings,global_mask)
 
 
     # ...

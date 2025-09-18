@@ -1,5 +1,5 @@
 
-export Pixel, make_raster_mask, make_pixels
+export Pixel, make_global_mask, make_pixels
 
 """
 
@@ -50,7 +50,7 @@ mutable struct Pixel
 end
 
 """
-    make_raster_mask
+    make_global_mask
 
 Create a raster mask of the overall region under study
 
@@ -67,7 +67,7 @@ Matrix:      Raster:
 So, when you take raster[2,1] you are taking the raster x=2 (from left), y=1(from top), that is 2 in this example.
 """
 
-function make_raster_mask(region)
+function make_global_mask(region)
     cres_epsg_id = region["cres_epsg_id"]
     x_lb = region["x_lb"]
     x_ub = region["x_ub"]

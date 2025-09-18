@@ -2,7 +2,7 @@
 
 GenFSM.runsim
 - ScenarioLoader.load_full_settings
-- Res.make_raster_mask
+- Res.make_global_mask
 - RES.make_pixels
 - RES.init!!
   - RES.init!!(Val(fr),...)
