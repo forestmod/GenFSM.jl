@@ -17,10 +17,12 @@ import DataFrames
 export Verbosity, NONE, LOW, STD, HIGH, FULL
 export runsim
 
-global_random_seed = 999 # actual global seed is then read from the YAML file
-verbosity = nothing
+
 
 include("Utils.jl")
+
+global_random_seed::Int = 999 # actual global seed is then read from the YAML file
+verbosity::Verbosity = STD
 
 #push!(LOAD_PATH,joinpath(@__DIR__,"ScenarioLoader"))
 #import ScenarioLoader as SLOAD
