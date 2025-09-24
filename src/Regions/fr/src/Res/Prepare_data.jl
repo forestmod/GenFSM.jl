@@ -541,7 +541,7 @@ function train_autoencode_clim(settings, mask, ign_growth)
         verbosity >= STD && @info(" -- creating xclimh df from raster files")
         xnames   = collect(keys(datafiles))
         n_xnames  = length(xnames)
-        xrasters = OrderedDict{Tuple{String, Int64, Int64},Rasters.Raster}([i => Rasters.Raster(datafiles[i]) |> replace_missing for i in xnames])
+        xrasters = OrderedDict{Tuple{String, Int64, Int64},Rasters.Raster}([i => Rasters.Raster(datafiles[i]) |> Rasters.replace_missing for i in xnames])
         # by time (month, year) var name
         xclimh   = DataFrames.DataFrame("C"=>Array{Int64}(undef,nxclimh), "R"=>Array{Int64}(undef,nxclimh), "Y"=>Array{Int64}(undef,nxclimh), vec(["$(v)_m$(m)_yl$(yl)" => Array{Float64}(undef,nxclimh) for m in 1:12, yl in (ae_nyears-1):-1:0, v in vars])...)
 

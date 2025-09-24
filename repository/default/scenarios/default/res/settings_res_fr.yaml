@@ -95,6 +95,6 @@ growth_model_training:
   max_train_attempts: 50
   acceptable_rme_val: 0.385 #0.385 # 0.38
   vol_growth_computation_adj_coeff: 0.001 # for comutational reasons to match orders of magnitude
-  n_models: 110
+  n_models: 300 # 110
 
 ftypes: ["br_HF", "br_COP", "br_MIX", "mixsp_HF", "mixsp_MIX", "con_HF"]
