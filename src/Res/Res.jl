@@ -36,8 +36,10 @@ function load_settings!(settings; override=Dict())
     # Override Reg settings if called from command line
     # Strict is false because in the override I may have regional stuff that I don't yet have on the main settings that I am overriding
     SLOAD.override_nested_dict!(settings,override, strict=false) 
-
-    ft_list = convert(Vector{String},DelimitedFiles.readdlm(joinpath(scenario_path,settings["res"]["ft_list"]),';')[:,1])
+    #println(scenario_path)
+    #println(settings["res"]["ft_list"])
+    ft_filepath = isfile(joinpath(scenario_path,settings["res"]["ft_list"])) ? joinpath(scenario_path,settings["res"]["ft_list"]) : joinpath(default_scenario_path,settings["res"]["ft_list"]) 
+    ft_list = convert(Vector{String},DelimitedFiles.readdlm(ft_filepath,';')[:,1])
     settings["res"]["ft"] = ft_list
     settings["simulation_region"]["nx"] = Int(ceil((settings["simulation_region"]["x_ub"] - settings["simulation_region"]["x_lb"]) / settings["simulation_region"]["xres"])) 
     settings["simulation_region"]["ny"] = Int(ceil((settings["simulation_region"]["y_ub"] - settings["simulation_region"]["y_lb"]) / settings["simulation_region"]["yres"]))

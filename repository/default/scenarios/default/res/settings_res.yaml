@@ -6,5 +6,5 @@ regions: ["fr"]
 # Diameter classes (dict)
 dc: {1: 7.5, 2: 15, 3: 25, 4: 35, 5: 45, 6: 55, 7: 65, 8: 75, 9: 85, 10: 95, 11: 150, 12: 9999}
 
-# Path of the file defining the forest types (relative to this file)
-ft_list:  ../default/res/forest_types.txt
+# Path of the file defining the forest types (relative to scenario path)
+ft_list:  "res/forest_types.txt"

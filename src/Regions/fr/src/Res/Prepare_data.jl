@@ -499,7 +499,7 @@ end
 
 
 function train_autoencode_clim(settings, mask, ign_growth)
-    @random_seed!
+    
     # This function trains the autoencoder for climatic data
     # It returns the autoencoded climatic data.
 
@@ -508,14 +508,16 @@ function train_autoencode_clim(settings, mask, ign_growth)
     force_other    = settings["res"]["fr"]["force_other"]
     force_ml_train = settings["res"]["fr"]["force_ml_train"]
     basefolder     = joinpath(settings["res"]["fr"]["cache_path"],"clim_historical")
+    rs             = settings["random_seed"]
 
     # if all needed files exists and no "xclim" in force_other, then returning the saved data
-    if (! ("ae_climh" in force_ml_train)) && (isfile(joinpath(basefolder,"xclimh_reduced.csv.gz")) && isfile(joinpath(basefolder,"scaler_clim_m.jld2"))  && isfile(joinpath(basefolder,"ae_clim_m.jld2")) )
-        xclimh_reduced = CSV.File(joinpath(basefolder,"xclimh_reduced.csv.gz")) |> DataFrames.DataFrame
-        scaler_clim_m  = BetaML.model_load(joinpath(basefolder,"scaler_clim_m.jld2"),"ms")
-        ae_clim_m      = BetaML.model_load(joinpath(basefolder,"ae_clim_m.jld2"),"ma")
+    if (! ("ae_climh" in force_ml_train)) && (isfile(joinpath(basefolder,"xclimh_reduced_rs$(rs).csv.gz")) && isfile(joinpath(basefolder,"scaler_clim_m_rs$(rs).jld2"))  && isfile(joinpath(basefolder,"ae_clim_m_rs$(rs).jld2")) )
+        xclimh_reduced = CSV.File(joinpath(basefolder,"xclimh_reduced_rs$(rs).csv.gz")) |> DataFrames.DataFrame
+        scaler_clim_m  = BetaML.model_load(joinpath(basefolder,"scaler_clim_m_rs$(rs).jld2"),"ms")
+        ae_clim_m      = BetaML.model_load(joinpath(basefolder,"ae_clim_m_rs$(rs).jld2"),"ma")
         return xclimh_reduced, scaler_clim_m, ae_clim_m 
     end
+    @random_seed!
 
     datafiles = settings["res"]["fr"]["input_rasters"]["clim"]["historical"]
     vars      = settings["res"]["fr"]["data_sources"]["clim"]["vars"]
@@ -579,7 +581,7 @@ function train_autoencode_clim(settings, mask, ign_growth)
 
     BetaML.fit!(ms,xtrain)
     xtrains  = BetaML.predict(ms,xtrain)
-    BetaML.model_save(joinpath(basefolder,"scaler_clim_m.jld2");ms)
+    BetaML.model_save(joinpath(basefolder,"scaler_clim_m_rs$(rs).jld2");ms)
 
 
     ma    = BetaML.AutoEncoder(encoded_size=ae_encoded_size,layers_size=ae_hidden_layer_size,epochs=ae_base_nepochs,verbosity=BetaML.LOW, cache=false)
@@ -611,14 +613,22 @@ function train_autoencode_clim(settings, mask, ign_growth)
             verbosity > STD && @info  "  -- detailed mse_train: $(mses_train')"
             verbosity > STD && @info  "  -- detailed mse_val: $(mses_val')"
             ma = previous_model
-            BetaML.model_save(joinpath(basefolder,"ae_clim_m.jld2");ma)
+            BetaML.model_save(joinpath(basefolder,"ae_clim_m_rs$(rs).jld2");ma)
+            mases_train  = [BetaML.mase(xtrain[:,i],x̂train[:,i]) for i in axes(xtrain,2)]
+            mases_val = [BetaML.mase(xval[:,i],x̂val[:,i]) for i in axes(xval,2)]
+            CSV.write(joinpath(basefolder,"ae_clim_mases_train_rs$(rs).jld2"),Tables.table(mases_train))
+            CSV.write(joinpath(basefolder,"ae_clim_mases_val_rs$(rs).jld2"),Tables.table(mases_val))
             break
         else
             verbosity >= STD && @info "Further training needed..."
             last_mse_val = mse_val_overall
             if n == ae_max_ntrains
                 verbosity >= LOW && @warn "Maximum number of training iterations reached, validation still descending. Saving the AE model, but consider further training."
-                BetaML.model_save(joinpath(basefolder,"ae_clim_m.jld2");ma)
+                BetaML.model_save(joinpath(basefolder,"ae_clim_m_rs$(rs).jld2");ma)
+                mases_train  = [BetaML.mase(xtrain[:,i],x̂train[:,i]) for i in axes(xtrain,2)]
+                mases_val = [BetaML.mase(xval[:,i],x̂val[:,i]) for i in axes(xval,2)]
+                CSV.write(joinpath(basefolder,"ae_clim_mases_train_rs$(rs).jld2"),Tables.table(mases_train))
+                CSV.write(joinpath(basefolder,"ae_clim_mases_val_rs$(rs).jld2"),Tables.table(mases_val))
             end
         end
     end
@@ -626,25 +636,27 @@ function train_autoencode_clim(settings, mask, ign_growth)
     xtot = BetaML.predict(ms,Matrix(xclimh[:,4:end]))
     xtot_reduced = BetaML.predict(ma,xtot)
     xclimh_reduced= hcat(xclimh[:,1:3],DataFrames.DataFrame(xtot_reduced,:auto))
-    CSV.write(joinpath(basefolder,"xclimh_reduced.csv.gz"),xclimh_reduced;compress=true)
+    CSV.write(joinpath(basefolder,"xclimh_reduced_rs$(rs).csv.gz"),xclimh_reduced;compress=true)
 
     return (xclimh_reduced,ms,ma)
 end
 
 
 function predict_autoencoder_clim(settings, mask, scaler_clim_m, ae_clim_m)
-    @random_seed!
+    
     settings["verbosity"] >= STD && @info("- predicting autoencoded future climatic data for scenario $(settings["scenario"])")
 
     force_other    = settings["res"]["fr"]["force_other"]
-    basefolder_h     = joinpath(settings["res"]["fr"]["cache_path"],"clim_historical")
-    basefolder_f     = joinpath(settings["res"]["fr"]["cache_path"],"clim_future",settings["scenario"])
+    basefolder_h   = joinpath(settings["res"]["fr"]["cache_path"],"clim_historical")
+    basefolder_f   = joinpath(settings["res"]["fr"]["cache_path"],"clim_future",settings["scenario"])
+    rs             = settings["random_seed"]
 
     # if all needed files exists and no "xclim" in force_other, then returning the saved data
-    if (! ("xclimf_reduced" in force_other)) && (isfile(joinpath(basefolder_f,"xclimf_reduced.csv.gz")) )
-        xclimf_reduced = CSV.File(joinpath(basefolder_f,"xclimf_reduced.csv.gz")) |> DataFrames.DataFrame
+    if (! ("xclimf_reduced" in force_other)) && (isfile(joinpath(basefolder_f,"xclimf_reduced_rs$(rs).csv.gz")) )
+        xclimf_reduced = CSV.File(joinpath(basefolder_f,"xclimf_reduced_rs$(rs).csv.gz")) |> DataFrames.DataFrame
         return xclimf_reduced
     end
+    @random_seed!
 
     fyears    = settings["res"]["fr"]["data_sources"]["clim"]["fut_years"]
     ae_nyears = settings["res"]["fr"]["data_sources"]["clim"]["ae_nyears"]
@@ -692,13 +704,13 @@ function predict_autoencoder_clim(settings, mask, scaler_clim_m, ae_clim_m)
         end
         end
     end
-    CSV.write(joinpath(basefolder_f,"xclimf_reduced.csv.gz"),xclimf_reduced;compress=true)
+    CSV.write(joinpath(basefolder_f,"xclimf_reduced_rs$(rs).csv.gz"),xclimf_reduced;compress=true)
     return xclimf_reduced
 end
 
 
 function trainpredict_autoencode_fixedpxdata(settings, mask)
-    @random_seed!
+    
     # function trainpredict_autoencode_fixedpxdata(settings, mask)
     # Note: we put together here both soil and elevation data.. perhaps it is better to separate them, as dtm is not really a soil variable, but rather a topographic variable, and the ae doesn't work supergood with it.
     verbosity = settings["verbosity"]
@@ -706,13 +718,15 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
 
     force_other    = settings["res"]["fr"]["force_other"]
     basefolder     = joinpath(settings["res"]["fr"]["cache_path"],"pxfixed")
+    rs             = settings["random_seed"]
 
     # if all needed files exists and no "xclim" in force_other, then returning the saved data
-    if (! ("xfixedpx_reduced" in force_other)) && isfile(joinpath(basefolder,"xfixedpx_reduced.csv.gz"))
-        xfixedpx_reduced = CSV.File(joinpath(basefolder,"xfixedpx_reduced.csv.gz")) |> DataFrames.DataFrame
+    if (! ("xfixedpx_reduced" in force_other)) && isfile(joinpath(basefolder,"xfixedpx_reduced_rs$(rs).csv.gz"))
+        xfixedpx_reduced = CSV.File(joinpath(basefolder,"xfixedpx_reduced_rs$(rs).csv.gz")) |> DataFrames.DataFrame
         return xfixedpx_reduced
     end
     isdir(basefolder) || mkpath(basefolder)
+    @random_seed!
 
     datafiles_dtm = settings["res"]["fr"]["input_rasters"]["dtm"]
     datafiles_soil = settings["res"]["fr"]["input_rasters"]["soil"]
@@ -789,14 +803,14 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
     # we don't use C/R in fixedpx
     ((xtrain,xval),(trainids,valids)) = BetaML.partition([Matrix(xfixedpx[:,3:end]),hcat(1:npx)],[train_ratio,1-train_ratio])
 
-    CSV.write(joinpath(basefolder,"xfixedpx.csv.gz"),xfixedpx;compress=true)
-    CSV.write(joinpath(basefolder,"xfixedpx_trainids.csv"),Tables.table(Int.(trainids)))
-    CSV.write(joinpath(basefolder,"xfixedpx_valids.csv"),Tables.table(Int.(valids)))
+    CSV.write(joinpath(basefolder,"xfixedpx_rs$(rs).csv.gz"),xfixedpx;compress=true)
+    CSV.write(joinpath(basefolder,"xfixedpx_trainids_rs$(rs).csv"),Tables.table(Int.(trainids)))
+    CSV.write(joinpath(basefolder,"xfixedpx_valids_rs$(rs).csv"),Tables.table(Int.(valids)))
 
     ms    = BetaML.Scaler(cache=false,skip=1:soil_texture_n_classes) # skip to scale the categorical TextureUSDA category cols
 
     BetaML.fit!(ms,Matrix(xfixedpx[:,3:end])) # old: BetaML.fit!(ms,xtrain)
-    BetaML.model_save(joinpath(basefolder,"ms_xfixedpx.jld2");ms)
+    BetaML.model_save(joinpath(basefolder,"ms_xfixedpx_rs$(rs).jld2");ms)
     xtrains  = BetaML.predict(ms,xtrain)
 
     ma    = BetaML.AutoEncoder(encoded_size=ae_encoded_size,layers_size=ae_hidden_layer_size,epochs=ae_base_nepochs,verbosity=BetaML.STD, cache=false)
@@ -842,8 +856,8 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
     xtot = BetaML.predict(ms,Matrix(xfixedpx[:,3:end]))
     xtot_reduced = BetaML.predict(ma,xtot)
     xfixedpx_reduced= hcat(xfixedpx[:,1:2],DataFrames.DataFrame(xtot_reduced,:auto))
-    CSV.write(joinpath(basefolder,"xfixedpx_reduced.csv.gz"),xfixedpx_reduced;compress=true)
-    BetaML.model_save(joinpath(basefolder,"ma_xfixedpx.jld2");ma)
+    CSV.write(joinpath(basefolder,"xfixedpx_reduced_rs$(rs).csv.gz"),xfixedpx_reduced;compress=true)
+    BetaML.model_save(joinpath(basefolder,"ma_xfixedpx_rs$(rs).jld2");ma)
 
     # Saving errors..
     x̂tots = BetaML.inverse_predict(ma,xtot_reduced)
@@ -857,7 +871,7 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
         BetaML.mase(xfixedpx[:,n],x̂fixedpx[:,n])
     ]) for n in names(xfixedpx)[3:end]]...,)
     errsdf = DataFrames.DataFrame(errs,["var","mean","rme","mase"])
-    CSV.write(joinpath(basefolder,"xfixerpx_ae_errors.csv"),errsdf)
+    CSV.write(joinpath(basefolder,"xfixerpx_ae_errors_rs$(rs).csv"),errsdf)
 
     return xfixedpx_reduced
 
@@ -877,7 +891,7 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
     # - the climate var are those of y2
     # - the co2 is the average of the y1:y2 years
 
-    @random_seed!
+    
 
     # -----------------------------------------------------------------------------
     # Getting options....
@@ -892,13 +906,16 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
     max_train_attempts = settings["res"]["fr"]["growth_model_training"]["max_train_attempts"]
     acceptable_rme_val = settings["res"]["fr"]["growth_model_training"]["acceptable_rme_val"]
     n_models           = settings["res"]["fr"]["growth_model_training"]["n_models"]
+    rs                 = settings["random_seed"]
 
     # if all needed files exists and no "xclim" in force_other, then returning the saved data
-    if (! ("growth" in force_ml_train)) && isfile(joinpath(basefolder,"growth_models.jld2")) && isfile(joinpath(basefolder,"growth_smodel.jld2"))
+    if (! ("growth" in force_ml_train)) && isfile(joinpath(basefolder,"growth_models_rs$(rs).jld2")) && isfile(joinpath(basefolder,"growth_smodel_rs$(rs).jld2"))
         verbosity >= GenFSM.HIGH && @info(" -- loading growth models from saved file")
         #global vol_growth_computation_parameters = JLD2.load(joinpath(basefolder,"vol_growth_computation_parameters.jld2"),"vol_growth_computation_parameters")
-        return BetaML.model_load(joinpath(basefolder,"growth_smodel.jld2")), BetaML.model_load(joinpath(basefolder,"growth_models.jld2")) 
+        return BetaML.model_load(joinpath(basefolder,"growth_smodel_rs$(rs).jld2")), BetaML.model_load(joinpath(basefolder,"growth_models_rs$(rs).jld2")) 
     end
+
+    @random_seed!
 
     ftypes    = settings["res"]["fr"]["ftypes"]
     ohm       = BetaML.OneHotEncoder(categories = ftypes)
@@ -948,7 +965,7 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
         # ydv = (r.vHa2 + r.vHaD - r.vHa1) / dt
         growth_df[ir,:] = [xidx, yidx,ft...,x,y,cl_data...,co2_conc,pxfix_data...,v,ydv]
     end
-    CSV.write(joinpath(basefolder,"growth_df.csv"), growth_df)
+    CSV.write(joinpath(basefolder,"growth_df_rs$(rs).csv"), growth_df)
 
     x =  Matrix(growth_df[:,3:end-1])
     y =  growth_df[:,end]
@@ -966,7 +983,7 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
     vscp2    = BetaML.parameters(ms).scalerpars.sfσ[end]
     vol_growth_computation_parameters = (vol_sc_par_mu=vscp1, vol_sc_par_sd=vscp2, adj_coeff=adj_coeff)
     nd = size(x,2)
-    BetaML.model_save(joinpath(basefolder,"growth_smodel.jld2");ms)
+    BetaML.model_save(joinpath(basefolder,"growth_smodel_rs$(rs).jld2");ms)
 
     # ----------------------------------------------------------------------------
     # Model definition...
@@ -994,8 +1011,8 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
     layers  = [l1,l2,l3,l4]
     mgr_tpl = BetaML.NeuralNetworkEstimator(epochs=20, batch_size=16, layers=layers, fail_attempts=30, fail_epoch_ref=1, fail_epoch=4)
 
-    partfile   = joinpath(basefolder,"growth_models_partitioned_px.csv")
-    errorsfile = joinpath(basefolder,"growth_models_errors.csv")
+    partfile   = joinpath(basefolder,"growth_models_partitioned_px_rs$(rs).csv")
+    errorsfile = joinpath(basefolder,"growth_models_errors_rs$(rs).csv")
     write(partfile, "mid,pxid,set\n")
     write(errorsfile, "mid,success,nattempts,rme_train,rme_val,rme_test,mase_train,mase_val,mase_test\n")
 
@@ -1099,7 +1116,7 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
             end
             modname = "mgr_$jm"
             overrite_model_file = (n_successes == 1) ? true : false
-            BetaML.model_save(joinpath(basefolder,"growth_models.jld2"),overrite_model_file;Symbol(modname) => mgr)
+            BetaML.model_save(joinpath(basefolder,"growth_models_rs$(rs).jld2"),overrite_model_file;Symbol(modname) => mgr)
 
         else
             @error "Growth model $(jm) training failed after $(max_train_attempts) attempts."
@@ -1108,7 +1125,7 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
 
     end
 
-    return BetaML.model_load(joinpath(basefolder,"growth_smodel.jld2")),BetaML.model_load(joinpath(basefolder,"growth_models.jld2")) 
+    return BetaML.model_load(joinpath(basefolder,"growth_smodel_rs$(rs).jld2")),BetaML.model_load(joinpath(basefolder,"growth_models_rs$(rs).jld2")) 
 end
 
 function define_state(settings, mask)
