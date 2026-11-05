@@ -186,11 +186,43 @@ end
 
 
 
-function vol_growth_computation_get_coefficients(m,row;vol_growth_computation_parameters = (vol_sc_par_mu=0.0, vol_sc_par_sd=1.0, adj_coeff=1.0, reparametrization="standard"))
+"""
+    set_device!(m,device)
+
+Set the `device` option (`:auto`, `:cpu`, `:gpu` or a MLDataDevices device object) of a BetaML neural network or autoencoder model, or of each model in a dictionary of models (as returned by `BetaML.model_load` with no names), e.g. for models loaded from the cache.
+Returns `m`.
+"""
+set_device!(m::Union{BetaML.NeuralNetworkEstimator,BetaML.AutoEncoder},device) = (BetaML.options(m).device = device; m)
+set_device!(ms::AbstractDict,device) = (foreach(m -> set_device!(m,device), values(ms)); ms)
+set_device!(m,_) = m # other models (e.g. scalers) don't have a device
+
+"""
+    cpu_layers(m::BetaML.NeuralNetworkEstimator)
+
+Return the layers of the (fitted) neural network `m` with their parameters on the CPU, copying them only if the model has been trained on a GPU.
+"""
+function cpu_layers(m)
+    nn = BetaML.parameters(m).nnstruct
+    p  = BetaML.Nn._first_param(nn)
+    (isnothing(p) || BetaML.Nn._iscpu(p)) && return nn.layers
+    mover = BetaML.Nn._DeviceMover(Vector{eltype(p)}(undef,0))
+    return BetaML.Nn.AbstractLayer[BetaML.Nn._layer_to_device(mover,l) for l in nn.layers]
+end
+
+"""
+    vol_growth_computation_get_coefficients(m,row;vol_growth_computation_parameters)
+
+Return the `(r,k,v,dv)` coefficients of the growth model for the (scaled) record `row`.
+
+`m` can be either the fitted `BetaML.NeuralNetworkEstimator` or its layers on the CPU as returned by [`cpu_layers`](@ref).
+When calling it on many records with a model trained on a GPU, pass the layers (`cl = cpu_layers(m)`) so that they are copied to the CPU only once.
+"""
+vol_growth_computation_get_coefficients(m::BetaML.NeuralNetworkEstimator,row;kwargs...) = vol_growth_computation_get_coefficients(cpu_layers(m),row;kwargs...)
+
+function vol_growth_computation_get_coefficients(comp_layers::AbstractVector{<:BetaML.Nn.AbstractLayer},row;vol_growth_computation_parameters = (vol_sc_par_mu=0.0, vol_sc_par_sd=1.0, adj_coeff=1.0, reparametrization="standard"))
     adj_coeff = vol_growth_computation_parameters.adj_coeff
     reparametrization = vol_growth_computation_parameters.reparametrization
-    comp_layers = BetaML.parameters(m).nnstruct.layers
-    xi_last = @pipe BetaML.forward(comp_layers[1],row)|> BetaML.forward(comp_layers[2],_) |> BetaML.forward(comp_layers[3],_) 
+    xi_last =@pipe BetaML.forward(comp_layers[1],row)|> BetaML.forward(comp_layers[2],_) |> BetaML.forward(comp_layers[3],_) 
     a = xi_last[1]
     v = xi_last[3]/vol_growth_computation_parameters.vol_sc_par_sd - vol_growth_computation_parameters.vol_sc_par_mu
 

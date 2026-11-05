@@ -22,6 +22,11 @@ years:
   step:  1
   end:   2100 
 verbosity:  HIGH # NONE, LOW, STD, HIGH, FULL. Here it is a string but this is converted to a enum (integer) in ScenarioLoader.load_full_settings.
+
+# Device where to train and run the neural networks (passed to BetaML): auto, cpu or gpu.
+# For `gpu`, load the package of your GPU vendor before running the model (e.g. `using CUDA`); GenFSM itself doesn't depend on it.
+# From Julia a MLDataDevices device object (e.g. `CUDADevice()`) can also be passed with `override`.
+device: auto
   
 
 # Output paths:

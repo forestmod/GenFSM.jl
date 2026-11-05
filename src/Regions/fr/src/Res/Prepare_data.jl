@@ -514,7 +514,7 @@ function train_autoencode_clim(settings, mask, ign_growth)
     if (! ("ae_climh" in force_ml_train)) && (isfile(joinpath(basefolder,"xclimh_reduced_rs$(rs).csv.gz")) && isfile(joinpath(basefolder,"scaler_clim_m_rs$(rs).jld2"))  && isfile(joinpath(basefolder,"ae_clim_m_rs$(rs).jld2")) )
         xclimh_reduced = CSV.File(joinpath(basefolder,"xclimh_reduced_rs$(rs).csv.gz")) |> DataFrames.DataFrame
         scaler_clim_m  = BetaML.model_load(joinpath(basefolder,"scaler_clim_m_rs$(rs).jld2"),"ms")
-        ae_clim_m      = BetaML.model_load(joinpath(basefolder,"ae_clim_m_rs$(rs).jld2"),"ma")
+        ae_clim_m      = set_device!(BetaML.model_load(joinpath(basefolder,"ae_clim_m_rs$(rs).jld2"),"ma"),settings["device"])
         return xclimh_reduced, scaler_clim_m, ae_clim_m 
     end
     @random_seed!
@@ -584,7 +584,7 @@ function train_autoencode_clim(settings, mask, ign_growth)
     BetaML.model_save(joinpath(basefolder,"scaler_clim_m_rs$(rs).jld2");ms)
 
 
-    ma    = BetaML.AutoEncoder(encoded_size=ae_encoded_size,layers_size=ae_hidden_layer_size,epochs=ae_base_nepochs,verbosity=BetaML.LOW, cache=false)
+    ma    = BetaML.AutoEncoder(encoded_size=ae_encoded_size,layers_size=ae_hidden_layer_size,epochs=ae_base_nepochs,verbosity=BetaML.LOW, cache=false, device=settings["device"])
 
     last_mse_val = Inf
     xclimh_reduced = nothing
@@ -813,7 +813,7 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
     BetaML.model_save(joinpath(basefolder,"ms_xfixedpx_rs$(rs).jld2");ms)
     xtrains  = BetaML.predict(ms,xtrain)
 
-    ma    = BetaML.AutoEncoder(encoded_size=ae_encoded_size,layers_size=ae_hidden_layer_size,epochs=ae_base_nepochs,verbosity=BetaML.STD, cache=false)
+    ma    = BetaML.AutoEncoder(encoded_size=ae_encoded_size,layers_size=ae_hidden_layer_size,epochs=ae_base_nepochs,verbosity=BetaML.STD, cache=false, device=settings["device"])
 
     last_mse_val = Inf
 
@@ -914,7 +914,7 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
     if (! ("growth" in force_ml_train)) && isfile(joinpath(basefolder,"growth_models_rs$(rs).jld2")) && isfile(joinpath(basefolder,"growth_smodel_rs$(rs).jld2"))
         verbosity >= GenFSM.HIGH && @info(" -- loading growth models from saved file")
         #global vol_growth_computation_parameters = JLD2.load(joinpath(basefolder,"vol_growth_computation_parameters.jld2"),"vol_growth_computation_parameters")
-        return BetaML.model_load(joinpath(basefolder,"growth_smodel_rs$(rs).jld2")), BetaML.model_load(joinpath(basefolder,"growth_models_rs$(rs).jld2")) 
+        return BetaML.model_load(joinpath(basefolder,"growth_smodel_rs$(rs).jld2")), set_device!(BetaML.model_load(joinpath(basefolder,"growth_models_rs$(rs).jld2")),settings["device"])
     end
 
     @random_seed!
@@ -1011,7 +1011,7 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
     l3      = BetaML.GroupedLayer([l3_ab,l3_v])
     l4      = BetaML.VectorFunctionLayer(3,f=Base.Fix2(GenFSM.Res_fr.vol_growth_computation,vol_growth_computation_parameters))
     layers  = [l1,l2,l3,l4]
-    mgr_tpl = BetaML.NeuralNetworkEstimator(epochs=20, batch_size=16, layers=layers, fail_attempts=30, fail_epoch_ref=1, fail_epoch=4)
+    mgr_tpl = BetaML.NeuralNetworkEstimator(epochs=20, batch_size=16, layers=layers, fail_attempts=30, fail_epoch_ref=1, fail_epoch=4, device=settings["device"])
 
     partfile   = joinpath(basefolder,"growth_models_partitioned_px_rs$(rs).csv")
     errorsfile = joinpath(basefolder,"growth_models_errors_rs$(rs).csv")
@@ -1042,9 +1042,10 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
             if rme_val < acceptable_rme_val
                 verbosity >= GenFSM.STD && @info "Growth model found a solution with rme_train=$(rme_train) and rme_val=$(rme_val). Let's check it is not linear..."
                 linear = false
+                mgr_layers = GenFSM.Res_fr.cpu_layers(mgr) # copied from the GPU (if used) only once per attempt
                 for j in js
                     row = xtrains[j,:]
-                    (aj,bj,vj,dvj) = GenFSM.Res_fr.vol_growth_computation_get_coefficients(mgr,row;vol_growth_computation_parameters=vol_growth_computation_parameters)
+                    (aj,bj,vj,dvj) = GenFSM.Res_fr.vol_growth_computation_get_coefficients(mgr_layers,row;vol_growth_computation_parameters=vol_growth_computation_parameters)
                     verbosity >= GenFSM.STD && @info "b parameter: $bj"
                     if abs(bj) > 2e6 
                     linear = true
@@ -1127,7 +1128,7 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
 
     end
 
-    return BetaML.model_load(joinpath(basefolder,"growth_smodel_rs$(rs).jld2")),BetaML.model_load(joinpath(basefolder,"growth_models_rs$(rs).jld2")) 
+    return BetaML.model_load(joinpath(basefolder,"growth_smodel_rs$(rs).jld2")),set_device!(BetaML.model_load(joinpath(basefolder,"growth_models_rs$(rs).jld2")),settings["device"])
 end
 
 function define_state(settings, mask)

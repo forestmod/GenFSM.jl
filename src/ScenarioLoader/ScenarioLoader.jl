@@ -82,6 +82,13 @@ function load_full_settings(project,scenario;override=Dict())
 
     # Override all the other settings from command line
     override_nested_dict!(settings,override)
+
+    # Device for the neural networks: "gpu" (from YAML) or :gpu (from override) both become :gpu
+    # Other values (e.g. a MLDataDevices device object) are passed unchanged to BetaML
+    if settings["device"] isa Union{AbstractString,Symbol}
+        settings["device"] = Symbol(lowercase(string(settings["device"])))
+        settings["device"] in (:auto,:cpu,:gpu) || error("Unknown device `$(settings["device"])`. Use `auto`, `cpu` or `gpu`.")
+    end
     return settings
 end
 
