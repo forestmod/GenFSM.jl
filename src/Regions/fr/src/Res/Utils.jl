@@ -167,14 +167,44 @@ Compute the volume growth based on the coefficients of the sigmoid function, the
   - `vol_sc_par_sd`: standard deviation of the volume scaling parameter
   - `adj_coeff`: adjustment coefficient for computational reasons, to adjust the order of magnitude of the growth rate coefficient to the order of magnitude of the maximum volume coefficient
 """
-vol_growth_computation(x,vol_growth_computation_parameters= (vol_sc_par_mu=1.0, vol_sc_par_sd=0.0, adj_coeff=1.0) ) = [x[1] * (x[3]/vol_growth_computation_parameters.vol_sc_par_sd - vol_growth_computation_parameters.vol_sc_par_mu) - (vol_growth_computation_parameters.adj_coeff*x[2]) * (x[3]/vol_growth_computation_parameters.vol_sc_par_sd - vol_growth_computation_parameters.vol_sc_par_mu)^2]
+function vol_growth_computation(x,vol_growth_computation_parameters= (vol_sc_par_mu=1.0, vol_sc_par_sd=0.0, adj_coeff=1.0, reparametrization="standard") )
+    reparametrization = vol_growth_computation_parameters.reparametrization
+    a = x[1]
+    v = x[3]/vol_growth_computation_parameters.vol_sc_par_sd - vol_growth_computation_parameters.vol_sc_par_mu
+    
+    if reparametrization == "standard"
+        b = x[2]/vol_growth_computation_parameters.adj_coeff          
+        return [a * v - b * v ^2]                      # a = r ;      b = (r/k) 
+    elseif reparametrization == "none"
+        b = x[2]*vol_growth_computation_parameters.adj_coeff
+        return [a * v - (a/b) * v ^2]                  
+    elseif reparametrization == "jdb"
+        b = x[2]*vol_growth_computation_parameters.adj_coeff
+        return [(4 * a * v / b) - (4* a * v^2 / b^2 )] # a = (rk/4) ; b = k 
+    end
+end
 
-function vol_growth_computation_get_coefficients(m,r;adj_coeff=1.0)
+
+
+function vol_growth_computation_get_coefficients(m,row;vol_growth_computation_parameters = (vol_sc_par_mu=0.0, vol_sc_par_sd=1.0, adj_coeff=1.0, reparametrization="standard"))
+    adj_coeff = vol_growth_computation_parameters.adj_coeff
+    reparametrization = vol_growth_computation_parameters.reparametrization
     comp_layers = BetaML.parameters(m).nnstruct.layers
-    xi_last = @pipe BetaML.forward(comp_layers[1],r)|> BetaML.forward(comp_layers[2],_) |> BetaML.forward(comp_layers[3],_) 
+    xi_last = @pipe BetaML.forward(comp_layers[1],row)|> BetaML.forward(comp_layers[2],_) |> BetaML.forward(comp_layers[3],_) 
     a = xi_last[1]
-    b = (a/xi_last[2])/adj_coeff
-    v = xi_last[3] 
+    v = xi_last[3]/vol_growth_computation_parameters.vol_sc_par_sd - vol_growth_computation_parameters.vol_sc_par_mu
+
+    if reparametrization == "standard"          #  r = a ;    k = r/b 
+        b = xi_last[2]/adj_coeff
+        r = a;  k = r/b
+    elseif reparametrization == "none"          # r = a ;     k = b
+        b = xi_last[2]*adj_coeff
+        r =  a; k = b               
+    elseif reparametrization == "jdb"           # r = 4a/k ;  k = b 
+        b = xi_last[2]*adj_coeff
+        k = b; r = 4 * a / k
+    end
+
     dv = BetaML.forward(comp_layers[4],xi_last) # 4
-    return (a,b,v,dv[1])
+    return (r,k,v,dv[1])
 end

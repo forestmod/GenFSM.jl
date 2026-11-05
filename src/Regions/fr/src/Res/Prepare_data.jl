@@ -906,6 +906,8 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
     max_train_attempts = settings["res"]["fr"]["growth_model_training"]["max_train_attempts"]
     acceptable_rme_val = settings["res"]["fr"]["growth_model_training"]["acceptable_rme_val"]
     n_models           = settings["res"]["fr"]["growth_model_training"]["n_models"]
+    reparametrization  = settings["res"]["fr"]["growth_model_training"]["reparametrization"]
+    println("Reparameterization: $reparametrization ")
     rs                 = settings["random_seed"]
 
     # if all needed files exists and no "xclim" in force_other, then returning the saved data
@@ -981,7 +983,7 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
     BetaML.parameters(ms).scalerpars.sfσ[co2conc_position]=0.0005
     vscp1    = BetaML.parameters(ms).scalerpars.sfμ[end]
     vscp2    = BetaML.parameters(ms).scalerpars.sfσ[end]
-    vol_growth_computation_parameters = (vol_sc_par_mu=vscp1, vol_sc_par_sd=vscp2, adj_coeff=adj_coeff)
+    vol_growth_computation_parameters = (vol_sc_par_mu=vscp1, vol_sc_par_sd=vscp2, adj_coeff=adj_coeff, reparametrization=reparametrization)
     nd = size(x,2)
     BetaML.model_save(joinpath(basefolder,"growth_smodel_rs$(rs).jld2");ms)
 
@@ -1041,8 +1043,8 @@ function train_growth_model(settings, ign_growth, xclimh_reduced, xfixedpx_reduc
                 verbosity >= GenFSM.STD && @info "Growth model found a solution with rme_train=$(rme_train) and rme_val=$(rme_val). Let's check it is not linear..."
                 linear = false
                 for j in js
-                    r = xtrains[j,:]
-                    (aj,bj,vj,dvj) = GenFSM.Res_fr.vol_growth_computation_get_coefficients(mgr,r;adj_coeff=vol_growth_computation_parameters.adj_coeff)
+                    row = xtrains[j,:]
+                    (aj,bj,vj,dvj) = GenFSM.Res_fr.vol_growth_computation_get_coefficients(mgr,row;vol_growth_computation_parameters=vol_growth_computation_parameters)
                     verbosity >= GenFSM.STD && @info "b parameter: $bj"
                     if abs(bj) > 2e6 
                     linear = true
