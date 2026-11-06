@@ -75,6 +75,8 @@ data_sources:
     ae_max_ntrains: 100
     ae_hidden_layer_size: 600
     ae_encoded_size: 6
+    ae_batch_size: 128
+    ae_kfolds_nsplits: 5
   
   # See also:
   # - https://greenhousegases.science.unimelb.edu.au/#!/view

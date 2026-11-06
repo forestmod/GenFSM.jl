@@ -7,6 +7,7 @@ import ..GenFSM.Res
 using DocStringExtensions, Dates
 
 import Downloads 
+import Dates
 import StatsBase
 import DataStructures: OrderedDict
 import Pipe: @pipe

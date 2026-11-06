@@ -503,7 +503,7 @@ function train_autoencode_clim(settings, mask, ign_growth)
     # This function trains the autoencoder for climatic data
     # It returns the autoencoded climatic data.
 
-    settings["verbosity"] >= STD && @info("- autoencoding climatic data")
+    settings["verbosity"] >= STD && @info("- autoencoding climatic data ($(Dates.now()))")
 
     force_other    = settings["res"]["fr"]["force_other"]
     force_ml_train = settings["res"]["fr"]["force_ml_train"]
@@ -531,6 +531,10 @@ function train_autoencode_clim(settings, mask, ign_growth)
     ae_max_ntrains  = settings["res"]["fr"]["data_sources"]["clim"]["ae_max_ntrains"]
     ae_hidden_layer_size = settings["res"]["fr"]["data_sources"]["clim"]["ae_hidden_layer_size"]
     ae_encoded_size = settings["res"]["fr"]["data_sources"]["clim"]["ae_encoded_size"]
+    ae_batch_size = settings["res"]["fr"]["data_sources"]["clim"]["ae_batch_size"]
+    ae_kfolds_nsplits = settings["res"]["fr"]["data_sources"]["clim"]["ae_kfolds_nsplits"]
+    ae_device = settings["device"]
+
     verbosity = settings["verbosity"]
     nC,nR     = size(mask)
     #nxclimh   = nC*nR*(length(hyears)-ae_nyears+1)
@@ -571,74 +575,53 @@ function train_autoencode_clim(settings, mask, ign_growth)
         CSV.write(joinpath(basefolder,"xclimh.csv.gz"),xclimh;compress=true)
     end
 
-
-    srows = StatsBase.sample(axes(xclimh, 1), ae_nsample,replace = false)
-    sx    = view(xclimh, srows, :)
-    datax = Matrix(sx[:,4:end])
-    ((xtrain,xval),) = BetaML.partition([datax],[0.8,0.2])
-
+    xtrain = Matrix(xclimh[:,4:end])
     ms    = BetaML.Scaler(cache=false)
-
     BetaML.fit!(ms,xtrain)
     xtrains  = BetaML.predict(ms,xtrain)
     BetaML.model_save(joinpath(basefolder,"scaler_clim_m_rs$(rs).jld2");ms)
+    sampler = BetaML.KFold(nsplits=ae_kfolds_nsplits)
+    ae_errors = []
+    base_model   = BetaML.AutoEncoder(encoded_size=ae_encoded_size,layers_size=ae_hidden_layer_size,epochs=ae_base_nepochs,verbosity=BetaML.LOW, cache=false, batch_size=ae_batch_size,device=ae_device)
+    best_attempt = 1
+    best_model   = deepcopy(base_model)
+    best_error   = Inf64
 
-
-    ma    = BetaML.AutoEncoder(encoded_size=ae_encoded_size,layers_size=ae_hidden_layer_size,epochs=ae_base_nepochs,verbosity=BetaML.LOW, cache=false, device=settings["device"])
-
-    last_mse_val = Inf
-    xclimh_reduced = nothing
-
-    for n in 1:ae_max_ntrains
-        verbosity >= STD && @info("  -- training passage: $n")
-        previous_model = deepcopy(ma)
-        BetaML.fit!(ma,xtrains)
-        xtrainr  = BetaML.predict(ma,xtrains)
-        x̂trains  = BetaML.inverse_predict(ma,xtrainr)
-        x̂train   = BetaML.inverse_predict(ms,x̂trains)
-        mses_train  = [BetaML.mse(xtrain[:,i],x̂train[:,i]) for i in axes(xtrain,2)]
-        #means_train = mean(xtrain,dims=1)'
-        xvals    = BetaML.predict(ms,xval)
-        xvalsr   = BetaML.predict(ma,xvals)
-        x̂vals    = BetaML.inverse_predict(ma,xvalsr)
-        x̂val     = BetaML.inverse_predict(ms,x̂vals)
-        mses_val = [BetaML.mse(xval[:,i],x̂val[:,i]) for i in axes(xval,2)]
-        #means_val = mean(xval,dims=1)'
-        mse_train_overall = StatsBase.mean(mses_train)
-        mse_val_overall   = StatsBase.mean(mses_val)
-        verbosity >= STD && @info "  -- $(n): mse_train: $(mse_train_overall)"
-        verbosity >= STD && @info "  -- $(n): mse_val: $(mse_val_overall)"
-        if mse_val_overall > last_mse_val
-            verbosity >= STD && @info "- DONE ae climatic model training."
-            verbosity > STD && @info  "  -- detailed mse_train: $(mses_train')"
-            verbosity > STD && @info  "  -- detailed mse_val: $(mses_val')"
-            ma = previous_model
-            BetaML.model_save(joinpath(basefolder,"ae_clim_m_rs$(rs).jld2");ma)
-            mases_train  = [BetaML.mase(xtrain[:,i],x̂train[:,i]) for i in axes(xtrain,2)]
-            mases_val = [BetaML.mase(xval[:,i],x̂val[:,i]) for i in axes(xval,2)]
-            CSV.write(joinpath(basefolder,"ae_clim_mases_train_rs$(rs).jld2"),Tables.table(mases_train))
-            CSV.write(joinpath(basefolder,"ae_clim_mases_val_rs$(rs).jld2"),Tables.table(mases_val))
+    verbosity >= GenFSM.STD && @info("  -- training AE for climatic data using CrossValidation for the epochs (may be long)")
+    for ie in 1:ae_max_ntrains
+        verbosity >= GenFSM.STD && @info("  -- ae climate training attempt: $ie")
+        (μ,σ) = BetaML.cross_validation([xtrains],sampler) do trainData, valData, rng
+            (xtrains_cv,) = trainData; (xvals_cv,) = valData
+            ma        = deepcopy(base_model)   
+            BetaML.fit!(ma,xtrains_cv)
+            xvalsr   = BetaML.predict(ma,xvals_cv)
+            x̂vals    = BetaML.inverse_predict(ma,xvalsr)
+            mase_val = [BetaML.mase(xvals_cv[:,i],x̂vals[:,i]) for i in axes(xvals_cv,2)]
+            mase_val_overall   = StatsBase.mean(mase_val)
+            return mase_val_overall
+        end
+        verbosity >= GenFSM.STD && @info "  -- $(ie): mase_val: $(μ)"
+        BetaML.fit!(base_model,xtrains) # base model fit
+        push!(ae_errors,μ)
+        if μ < best_error
+            best_model = deepcopy(base_model)
+            best_attemp = ie
+            best_error = μ
+            verbosity >= GenFSM.STD && @info "** New best error $(best_error) ot iteration $(best_attemp) **"
+        end
+        ie > 6 || continue # first 6 attempts are always performed
+        # We return if error is going up
+        if StatsBase.mean(ae_errors[end-3:end]) > StatsBase.mean(ae_errors[end-6:end-3])
             break
-        else
-            verbosity >= STD && @info "Further training needed..."
-            last_mse_val = mse_val_overall
-            if n == ae_max_ntrains
-                verbosity >= LOW && @warn "Maximum number of training iterations reached, validation still descending. Saving the AE model, but consider further training."
-                BetaML.model_save(joinpath(basefolder,"ae_clim_m_rs$(rs).jld2");ma)
-                mases_train  = [BetaML.mase(xtrain[:,i],x̂train[:,i]) for i in axes(xtrain,2)]
-                mases_val = [BetaML.mase(xval[:,i],x̂val[:,i]) for i in axes(xval,2)]
-                CSV.write(joinpath(basefolder,"ae_clim_mases_train_rs$(rs).jld2"),Tables.table(mases_train))
-                CSV.write(joinpath(basefolder,"ae_clim_mases_val_rs$(rs).jld2"),Tables.table(mases_val))
-            end
         end
     end
-
-    xtot = BetaML.predict(ms,Matrix(xclimh[:,4:end]))
-    xtot_reduced = BetaML.predict(ma,xtot)
+    BetaML.model_save(joinpath(basefolder,"ae_clim_ae_rs$(rs).jld2"); ma=best_model)
+    CSV.write(joinpath(basefolder,"ae_clim_ae_mase_rs$(rs).csv"),Tables.table(Float64.(ae_errors)))
+    xtot_reduced = BetaML.predict(best_model,xtrains)
     xclimh_reduced= hcat(xclimh[:,1:3],DataFrames.DataFrame(xtot_reduced,:auto))
     CSV.write(joinpath(basefolder,"xclimh_reduced_rs$(rs).csv.gz"),xclimh_reduced;compress=true)
-
-    return (xclimh_reduced,ms,ma)
+    verbosity >= GenFSM.STD && @info "Done AE climate. Best mase val: $(best_error) ($(Dates.now()))"
+    return (xclimh_reduced,ms,best_model)
 end
 
 
