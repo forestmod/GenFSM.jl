@@ -580,6 +580,7 @@ function train_autoencode_clim(settings, mask, ign_growth)
     BetaML.fit!(ms,xtrain)
     xtrains  = BetaML.predict(ms,xtrain)
     BetaML.model_save(joinpath(basefolder,"scaler_clim_m_rs$(rs).jld2");ms)
+    
     sampler = BetaML.KFold(nsplits=ae_kfolds_nsplits)
     ae_errors = []
     base_model   = BetaML.AutoEncoder(encoded_size=ae_encoded_size,layers_size=ae_hidden_layer_size,epochs=ae_base_nepochs,verbosity=BetaML.LOW, cache=false, batch_size=ae_batch_size,device=ae_device)
@@ -615,8 +616,8 @@ function train_autoencode_clim(settings, mask, ign_growth)
             break
         end
     end
-    BetaML.model_save(joinpath(basefolder,"ae_clim_ae_rs$(rs).jld2"); ma=best_model)
-    CSV.write(joinpath(basefolder,"ae_clim_ae_mase_rs$(rs).csv"),Tables.table(Float64.(ae_errors)))
+    BetaML.model_save(joinpath(basefolder,"ae_clim_m_rs$(rs).jld2"); ma=best_model)
+    CSV.write(joinpath(basefolder,"ae_clim_m_mase_rs$(rs).csv"),Tables.table(Float64.(ae_errors)))
     xtot_reduced = BetaML.predict(best_model,xtrains)
     xclimh_reduced= hcat(xclimh[:,1:3],DataFrames.DataFrame(xtot_reduced,:auto))
     CSV.write(joinpath(basefolder,"xclimh_reduced_rs$(rs).csv.gz"),xclimh_reduced;compress=true)
@@ -798,6 +799,12 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
 
     ma    = BetaML.AutoEncoder(encoded_size=ae_encoded_size,layers_size=ae_hidden_layer_size,epochs=ae_base_nepochs,verbosity=BetaML.STD, cache=false, device=settings["device"])
 
+
+    # TODO REPLACE
+
+
+
+    # ------------------
     last_mse_val = Inf
 
     for n in 1:ae_max_ntrains
@@ -835,6 +842,14 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
             end
         end
     end
+# --- END REPLACE --------------
+
+
+
+
+
+
+
 
     xtot = BetaML.predict(ms,Matrix(xfixedpx[:,3:end]))
     xtot_reduced = BetaML.predict(ma,xtot)
