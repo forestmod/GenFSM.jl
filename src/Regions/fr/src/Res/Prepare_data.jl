@@ -580,7 +580,7 @@ function train_autoencode_clim(settings, mask, ign_growth)
     BetaML.fit!(ms,xtrain)
     xtrains  = BetaML.predict(ms,xtrain)
     BetaML.model_save(joinpath(basefolder,"scaler_clim_m_rs$(rs).jld2");ms)
-    
+
     sampler = BetaML.KFold(nsplits=ae_kfolds_nsplits)
     ae_errors = []
     base_model   = BetaML.AutoEncoder(encoded_size=ae_encoded_size,layers_size=ae_hidden_layer_size,epochs=ae_base_nepochs,verbosity=BetaML.LOW, cache=false, batch_size=ae_batch_size,device=ae_device)
@@ -715,11 +715,15 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
     datafiles_dtm = settings["res"]["fr"]["input_rasters"]["dtm"]
     datafiles_soil = settings["res"]["fr"]["input_rasters"]["soil"]
     datafiles = merge(datafiles_soil,datafiles_dtm) # first soil, so I have the classes not to scalar at the beginning
-    ae_maxntrain = settings["res"]["fr"]["px_fixed_data"]["ae_maxntrain"]
+    #ae_maxntrain = settings["res"]["fr"]["px_fixed_data"]["ae_maxntrain"]
     ae_base_nepochs = settings["res"]["fr"]["px_fixed_data"]["ae_base_nepochs"]
     ae_max_ntrains  = settings["res"]["fr"]["px_fixed_data"]["ae_max_ntrains"]
     ae_hidden_layer_size = settings["res"]["fr"]["px_fixed_data"]["ae_hidden_layer_size"]
     ae_encoded_size = settings["res"]["fr"]["px_fixed_data"]["ae_encoded_size"]
+    ae_batch_size     = settings["res"]["fr"]["px_fixed_data"]["ae_batch_size"]
+    ae_kfolds_nsplits = settings["res"]["fr"]["px_fixed_data"]["ae_kfolds_nsplits"]
+
+
     xnames    = collect(keys(datafiles))
     n_xnames  = length(xnames)
     nC,nR = size(mask)
@@ -728,137 +732,108 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
     #nd_soil = length(keys(datafiles_soil))
     soil_texture_n_classes = settings["res"]["fr"]["data_sources"]["soil_texture_n_classes"]
 
-    verbosity >= GenFSM.STD && @info(" -- creating xfixedpx df from raster files")
-
-    xrasters = OrderedDict{String,Rasters.Raster}([i => Rasters.Raster(datafiles[i]) |> Rasters.replace_missing for i in xnames])
-    # by time (month, year) var name
-    xfixedpx   = DataFrames.DataFrame("C"=>Array{Int64}(undef,nx), "R"=>Array{Int64}(undef,nx), vec(["$(var)" => Array{Float64}(undef,nx) for var in xnames])...)
-
-    # Reformatting the data in a large matrix (records [pixels] x variables)
-    ridx = 1
-    (n_problematic_px, n_very_problematic_px) = (0,0)
-    for c in 1:nC
-        verbosity > GenFSM.HIGH && @info("    -- creating xfixedpx  data for column: $c")
-        for r in 1:nR
-            mask[c,r] == 1 || continue # skip pixels outside the mask
-            xfixedpx[ridx,[1,2]] .= [c,r]
-            cidx = 3
-            for v in xnames
-                if(ismissing(xrasters[v][c,r]))
-                    # This happens in a few pixels at the border of the mask. Assigning the average of the variable in the neighmour pixels
-                    vals = Float64[]
-                    for c2 in max(1,c-2):min(nC,c+2)
-                        for r2 in max(1,r-2):min(nR,r+2)
-                            if(mask[c2,r2] == 1 && !ismissing(xrasters[v][c2,r2]))
-                                push!(vals,xrasters[v][c2,r2])
+    if (! ("xfixedp" in force_other)) && (isfile(joinpath(basefolder,"xfixedpx.csv.gz")))
+        verbosity >= STD && @info(" -- reading xfixedpx df from saved CSV file")
+        xfixedpx = CSV.File(joinpath(basefolder,"xfixedpx.csv.gz")) |> DataFrames.DataFrame
+    else
+        verbosity >= GenFSM.STD && @info(" -- creating xfixedpx df from raster files")
+        xrasters = OrderedDict{String,Rasters.Raster}([i => Rasters.Raster(datafiles[i]) |> Rasters.replace_missing for i in xnames])
+        # by time (month, year) var name
+        xfixedpx   = DataFrames.DataFrame("C"=>Array{Int64}(undef,nx), "R"=>Array{Int64}(undef,nx), vec(["$(var)" => Array{Float64}(undef,nx) for var in xnames])...)
+        # Reformatting the data in a large matrix (records [pixels] x variables)
+        ridx = 1
+        (n_problematic_px, n_very_problematic_px) = (0,0)
+        for c in 1:nC
+            verbosity > GenFSM.HIGH && @info("    -- creating xfixedpx  data for column: $c")
+            for r in 1:nR
+                mask[c,r] == 1 || continue # skip pixels outside the mask
+                xfixedpx[ridx,[1,2]] .= [c,r]
+                cidx = 3
+                for v in xnames
+                    if(ismissing(xrasters[v][c,r]))
+                        # This happens in a few pixels at the border of the mask. Assigning the average of the variable in the neighmour pixels
+                        vals = Float64[]
+                        for c2 in max(1,c-2):min(nC,c+2)
+                            for r2 in max(1,r-2):min(nR,r+2)
+                                if(mask[c2,r2] == 1 && !ismissing(xrasters[v][c2,r2]))
+                                    push!(vals,xrasters[v][c2,r2])
+                                end
                             end
                         end
-                    end
-                    if(length(vals) > 0)
-                        n_problematic_px += 1
-                        xfixedpx[ridx,cidx] = StatsBase.mean(vals)
+                        if(length(vals) > 0)
+                            n_problematic_px += 1
+                            xfixedpx[ridx,cidx] = StatsBase.mean(vals)
+                        else
+                            n_very_problematic_px += 1
+                            xfixedpx[ridx,cidx] = StatsBase.mean(skipmissing(xrasters[v]))
+                            verbosity >= GenFSM.HIGH && @warn("Missing value for variable `$(v)` at pixel $(c),$(r). No neighbour pixels found to calculate the average. using the mean of all pixels: $(xfixedpx[ridx,cidx])")
+                        end
                     else
-                        n_very_problematic_px += 1
-                        xfixedpx[ridx,cidx] = StatsBase.mean(skipmissing(xrasters[v]))
-                        verbosity >= GenFSM.HIGH && @warn("Missing value for variable `$(v)` at pixel $(c),$(r). No neighbour pixels found to calculate the average. using the mean of all pixels: $(xfixedpx[ridx,cidx])")
+                        #println("(v,c,r): $(v), $c, $r  - $(xrasters[v][c,r])")
+                        xfixedpx[ridx,cidx] = xrasters[v][c,r]
                     end
-                else
-                    #println("(v,c,r): $(v), $c, $r  - $(xrasters[v][c,r])")
-                    xfixedpx[ridx,cidx] = xrasters[v][c,r]
+                    cidx +=1
                 end
-                cidx +=1
+                ridx +=1
             end
-            ridx +=1
         end
+        verbosity >= GenFSM.HIGH && @info("    -- finished creating xfixedpx data. Number of pixels with missing values: $(n_problematic_px), number of pixels with no neighbour pixels: $(n_very_problematic_px), number of total pixels: $(ridx)")
+        CSV.write(joinpath(basefolder,"xfixedpx.csv.gz"),xfixedpx;compress=true)
     end
-
-    npx         = size(xfixedpx,1)
-    train_ratio = min(ae_maxntrain/npx, 0.8)
-    verbosity >= GenFSM.HIGH && @info("    -- finished creating xfixedpx data. Number of pixels with missing values: $(n_problematic_px), number of pixels with no neighbour pixels: $(n_very_problematic_px), number of total pixels: $(ridx)")
-
-    #=
-    srows = StatsBase.sample(axes(xfixedpx, 1), ae_nsample,replace = false)
-    sx    = view(xfixedpx, srows, :)
-    datax = Matrix(sx[:,3:end]) # NOTE: I skip the first two columns (C,R) !!
-    nd = size(datax,2)
-    =#
-
-
-    # we don't use C/R in fixedpx
-    ((xtrain,xval),(trainids,valids)) = BetaML.partition([Matrix(xfixedpx[:,3:end]),hcat(1:npx)],[train_ratio,1-train_ratio])
-
-    CSV.write(joinpath(basefolder,"xfixedpx_rs$(rs).csv.gz"),xfixedpx;compress=true)
-    CSV.write(joinpath(basefolder,"xfixedpx_trainids_rs$(rs).csv"),Tables.table(Int.(trainids)))
-    CSV.write(joinpath(basefolder,"xfixedpx_valids_rs$(rs).csv"),Tables.table(Int.(valids)))
 
     ms    = BetaML.Scaler(cache=false,skip=1:soil_texture_n_classes) # skip to scale the categorical TextureUSDA category cols
 
-    BetaML.fit!(ms,Matrix(xfixedpx[:,3:end])) # old: BetaML.fit!(ms,xtrain)
-    BetaML.model_save(joinpath(basefolder,"ms_xfixedpx_rs$(rs).jld2");ms)
-    xtrains  = BetaML.predict(ms,xtrain)
+    xtrain  = Matrix(xfixedpx[:,3:end])
+    BetaML.fit!(ms,xtrain)
+    xtrains = BetaML.predict(ms,xtrain)
+    BetaML.model_save(joinpath(basefolder,"xfixedpx_ms_rs$(rs).jld2");ms)
+ 
+    sampler = BetaML.KFold(nsplits=ae_kfolds_nsplits)
+    ae_errors = []
+    base_model   = BetaML.AutoEncoder(encoded_size=ae_encoded_size,layers_size=ae_hidden_layer_size,epochs=ae_base_nepochs,batch_size=ae_batch_size,verbosity=BetaML.STD, cache=false, device=settings["device"])
 
-    ma    = BetaML.AutoEncoder(encoded_size=ae_encoded_size,layers_size=ae_hidden_layer_size,epochs=ae_base_nepochs,verbosity=BetaML.STD, cache=false, device=settings["device"])
+    best_attempt = 1
+    best_model   = deepcopy(base_model)
+    best_error   = Inf64
 
-
-    # TODO REPLACE
-
-
-
-    # ------------------
-    last_mse_val = Inf
-
-    for n in 1:ae_max_ntrains
-        verbosity >= GenFSM.STD && @info("  -- training passage: $n")
-        previous_model = deepcopy(ma)
-        BetaML.fit!(ma,xtrains)
-        xtrainr  = BetaML.predict(ma,xtrains)
-        x̂trains  = BetaML.inverse_predict(ma,xtrainr)
-        x̂train   = BetaML.inverse_predict(ms,x̂trains)
-        mses_train  = [BetaML.mse(xtrain[:,i],x̂train[:,i]) for i in axes(xtrain,2)]
-        #means_train = mean(xtrain,dims=1)'
-        xvals    = BetaML.predict(ms,xval)
-        xvalsr   = BetaML.predict(ma,xvals)
-        x̂vals    = BetaML.inverse_predict(ma,xvalsr)
-        x̂val     = BetaML.inverse_predict(ms,x̂vals)
-        mses_val = [BetaML.mse(xval[:,i],x̂val[:,i]) for i in axes(xval,2)]
-        #means_val = mean(xval,dims=1)'
-        mse_train_overall = StatsBase.mean(mses_train)
-        mse_val_overall   = StatsBase.mean(mses_val)
-        verbosity >= GenFSM.STD && @info "  -- $(n): mse_train: $(mse_train_overall)"
-        verbosity >= GenFSM.STD && @info "  -- $(n): mse_val: $(mse_val_overall)"
-        if mse_val_overall > last_mse_val
-            verbosity >= GenFSM.STD && @info "- DONE ae pxfixed model training."
-            verbosity > GenFSM.STD && @info  "  -- detailed mse_train: $(mses_train')"
-            verbosity > GenFSM.STD && @info  "  -- detailed mse_val: $(mses_val')"
-            ma = previous_model
-            #BetaML.model_save(joinpath(basefolder,"ae_clim_m.jld2");ma)
+    verbosity >= GenFSM.STD && @info("  -- training AE for fixed data using CrossValidation for the epochs (may be long)")
+    for ie in 1:ae_max_ntrains
+        verbosity >= GenFSM.STD && @info("  -- ae fixedpx training attempt: $ie")
+        (μ,σ) = BetaML.cross_validation([xtrains],sampler) do trainData, valData, rng
+            (xtrains_cv,) = trainData; (xvals_cv,) = valData
+            ma        = deepcopy(base_model)   
+            BetaML.fit!(ma,xtrains_cv)
+            xvalsr   = BetaML.predict(ma,xvals_cv)
+            x̂vals    = BetaML.inverse_predict(ma,xvalsr)
+            mase_val = [BetaML.mase(xvals_cv[:,i],x̂vals[:,i]) for i in axes(xvals_cv,2)]
+            mase_val_overall   = StatsBase.mean(mase_val)
+            return mase_val_overall
+        end
+        verbosity >= GenFSM.STD && @info "  -- $(ie): mase_val: $(μ)"
+        BetaML.fit!(base_model,xtrains) # base model fit
+        push!(ae_errors,μ)
+        if μ < best_error
+            best_model = deepcopy(base_model)
+            best_attemp = ie
+            best_error = μ
+            verbosity >= GenFSM.STD && @info "** New best error $(best_error) ot iteration $(best_attemp) **"
+        end
+        ie > 6 || continue # first 6 attempts are always performed
+        # We return if error is going up
+        if StatsBase.mean(ae_errors[end-3:end]) > StatsBase.mean(ae_errors[end-6:end-3])
             break
-        else
-            verbosity >= GenFSM.STD && @info "Further training needed..."
-            last_mse_val = mse_val_overall
-            if n == ae_max_ntrains
-                verbosity >= GenFSM.LOW && @warn "Maximum number of training iterations reached, validation still descending. Saving the AE model, but consider further training."
-                #BetaML.model_save(joinpath(basefolder,"ae_clim_m.jld2");ma)
-            end
         end
     end
-# --- END REPLACE --------------
+    verbosity >= GenFSM.STD && @info "Done AE xfixedpx. Best mase val: $(best_error) ($(Dates.now()))"
 
-
-
-
-
-
-
-
-    xtot = BetaML.predict(ms,Matrix(xfixedpx[:,3:end]))
-    xtot_reduced = BetaML.predict(ma,xtot)
+    BetaML.model_save(joinpath(basefolder,"xfixedpx_ae_rs$(rs).jld2"); ma=best_model)
+    CSV.write(joinpath(basefolder,"xfixedpx_ae_mase_rs$(rs).csv"),Tables.table(Float64.(ae_errors)))
+    xtot_reduced = BetaML.predict(best_model,xtrains)
     xfixedpx_reduced= hcat(xfixedpx[:,1:2],DataFrames.DataFrame(xtot_reduced,:auto))
     CSV.write(joinpath(basefolder,"xfixedpx_reduced_rs$(rs).csv.gz"),xfixedpx_reduced;compress=true)
-    BetaML.model_save(joinpath(basefolder,"ma_xfixedpx_rs$(rs).jld2");ma)
 
-    # Saving errors..
-    x̂tots = BetaML.inverse_predict(ma,xtot_reduced)
+    # Computing errors by individual dimension...
+    x̂tots = BetaML.inverse_predict(best_model,xtot_reduced)
     x̂tot  = BetaML.inverse_predict(ms,x̂tots)
     x̂fixedpx = hcat(xfixedpx[:,1:2],DataFrames.DataFrame(x̂tot,names(xfixedpx)[3:end]))
 

@@ -85,11 +85,13 @@ data_sources:
   co2_conc_url: "https://raw.githubusercontent.com/SantanderMetGroup/wrf-ghg-files/refs/heads/master/CAMtr_volume_mixing_ratio.${SSP_SCENARIO}"
 
 px_fixed_data:
-    ae_maxntrain: 100000
-    ae_base_nepochs: 10
-    ae_max_ntrains: 100
-    ae_hidden_layer_size: 300
-    ae_encoded_size: 6
+  #ae_maxntrain: 100000
+  ae_base_nepochs: 10
+  ae_max_ntrains: 100
+  ae_hidden_layer_size: 300
+  ae_encoded_size: 6
+  ae_batch_size: 128
+  ae_kfolds_nsplits: 5
 
 ign_data:
   genders_broadleaves: ["Acer", "Aesculus", "Ailanthus", "Alnus", "Arbutus", "Betula", "Broussonetia", "Buxus", "Carpinus", "Castanea", "Catalpa", "Celtis", "Ceratonia", "Cercis", "Citrus", "Cornus", "Corylus", "Crataegus", "Cupressus", "Cydonia", "Diospyros", "Elaeagnus", "Erica", "Eucalyptus", "Euonymus", "Fagus", "Ficus", "Frangula", "Fraxinus", "Ilex", "Juglans", "Laburnum", "Laurus", "Liquidambar", "Liriodendron", "Maclura", "Malus", "Morus", "Olea", "Ostrya", "Paulownia", "Phillyrea", "Pistacia", "Platanus", "Populus", "Prunus", "Pyrus", "Quercus", "Rhamnus", "Rhus", "Robinia", "Salix", "Sambucus", "Sorbus", "Tamarix", "Tilia", "Ulmus", "Vachellia"]
