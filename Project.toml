@@ -1,12 +1,13 @@
 name = "GenFSM"
 uuid = "652e9e7b-025e-40fa-a37d-3dffc9b6d7c7"
-authors = ["Antonello Lobianco <antonello@lobianco.org>"]
 version = "0.0.1"
+authors = ["Antonello Lobianco <antonello@lobianco.org>"]
 
 [deps]
 ArchGDAL = "c9ce4bd3-c3d5-55b8-8973-c0e20141b8c3"
 BetaML = "024491cd-cc6b-443e-8034-08ea7eb7db2b"
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 CondaPkg = "992eb4ea-22a4-4c89-a5bb-47a3300528ab"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
@@ -34,6 +35,9 @@ YAML = "ddb6d928-2868-570f-bddf-ab3f9cf99eb6"
 ZipFile = "a5390f91-8eb1-5f08-bee0-b1d1ffed6cea"
 
 [compat]
+Rasters = "0.15"
+Geomorphometry = "0.7"
+CUDA = "6"
 CondaPkg = "0.2"
 Dates = "1.11"
 DocStringExtensions = "0.9"
