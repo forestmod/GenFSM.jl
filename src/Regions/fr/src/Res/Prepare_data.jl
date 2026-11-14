@@ -732,73 +732,47 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
     #nd_soil = length(keys(datafiles_soil))
     soil_texture_n_classes = settings["res"]["fr"]["data_sources"]["soil_texture_n_classes"]
 
-    if (! ("xfixedp" in force_other)) && (isfile(joinpath(basefolder,"xfixedpx.csv.gz")))
+    if ((! ("xfixedp" in force_other)) && isfile(joinpath(basefolder,"xfixedpx_imputed.csv.gz")) && isfile(joinpath(basefolder,"xfixedpx_train.csv.gz")))
         verbosity >= STD && @info(" -- reading xfixedpx df from saved CSV file")
-        xfixedpx = CSV.File(joinpath(basefolder,"xfixedpx.csv.gz")) |> DataFrames.DataFrame
+        xfixedpx_imputed  = CSV.File(joinpath(basefolder,"xfixedpx_imputed.csv.gz")) |> DataFrames.DataFrame
+        xfixedpx_train    = CSV.File(joinpath(basefolder,"xfixedpx_train.csv.gz")) |> DataFrames.DataFrame
     else
         verbosity >= GenFSM.STD && @info(" -- creating xfixedpx df from raster files")
         xrasters = OrderedDict{String,Rasters.Raster}([i => Rasters.Raster(datafiles[i]) |> Rasters.replace_missing for i in xnames])
-        # by time (month, year) var name
-        xfixedpx       = DataFrames.DataFrame("C"=>Array{Int64}(undef,nx), "R"=>Array{Int64}(undef,nx), vec(["$(var)" => Array{Float64}(undef,nx) for var in xnames])...)
-        # Version without missing data not imputation for training
-        xfixedpx_train = DataFrames.DataFrame("C"=>Array{Union{Missing,Int64}}(missing,nx), "R"=>Array{Union{Missing,Int64}}(missing,nx), vec(["$(var)" => Array{Union{Missing,Float64}}(missing,nx) for var in xnames])...)
+        # by time (month, year) var name. 
+        xfixedpx = DataFrames.DataFrame("C"=>Array{Union{Missing,Int64}}(missing,nx), "R"=>Array{Union{Missing,Int64}}(missing,nx), vec(["$(var)" => Array{Union{Missing,Float64}}(missing,nx) for var in xnames])...)
         # Reformatting the data in a large matrix (records [pixels] x variables)
-        ridx = 1
-        (n_problematic_px, n_very_problematic_px) = (0,0)
+        ridx = 0
         for c in 1:nC
-            verbosity > GenFSM.HIGH && @info("    -- creating xfixedpx  data for column: $c")
+            verbosity > GenFSM.HIGH && @info("    -- creating xfixedpx data for column: $c")
             for r in 1:nR
                 mask[c,r] == 1 || continue # skip pixels outside the mask
+                ridx +=1
                 xfixedpx[ridx,[1,2]] .= [c,r]
-                xfixedpx_train[ridx,[1,2]] .= [c,r]
                 cidx = 3
                 for v in xnames
-                    if(ismissing(xrasters[v][c,r]))
-                        # This happens in a few pixels at the border of the mask. Assigning the average of the variable in the neighmour pixels
-                        vals = Float64[]
-                        for c2 in max(1,c-2):min(nC,c+2)
-                            for r2 in max(1,r-2):min(nR,r+2)
-                                if(mask[c2,r2] == 1 && !ismissing(xrasters[v][c2,r2]))
-                                    push!(vals,xrasters[v][c2,r2])
-                                end
-                            end
-                        end
-                        if(length(vals) > 0)
-                            n_problematic_px += 1
-                            xfixedpx[ridx,cidx] = StatsBase.mean(vals)
-                        else
-                            n_very_problematic_px += 1
-                            xfixedpx[ridx,cidx] = StatsBase.mean(skipmissing(xrasters[v]))
-                            verbosity >= GenFSM.HIGH && @warn("Missing value for variable `$(v)` at pixel $(c),$(r). No neighbour pixels found to calculate the average. using the mean of all pixels: $(xfixedpx[ridx,cidx])")
-                        end
-                    else
+                    if(! ismissing(xrasters[v][c,r]))
                         #println("(v,c,r): $(v), $c, $r  - $(xrasters[v][c,r])")
                         xfixedpx[ridx,cidx] = xrasters[v][c,r]
-                        xfixedpx_train[ridx,cidx] = xrasters[v][c,r]
                     end
                     cidx +=1
                 end
-                ridx +=1
             end
         end
-        verbosity >= GenFSM.HIGH && @info("    -- finished creating xfixedpx data. Number of pixels with some missing values: $(n_problematic_px), number of pixels with no neighbour pixels: $(n_very_problematic_px), number of total pixels: $(ridx)")
-        CSV.write(joinpath(basefolder,"xfixedpx.csv.gz"),xfixedpx;compress=true)
     end
 
-    nr_full = size(xfixedpx_train,1)
-
-
-    verbosity >= GenFSM.HIGH && @info("    -- Imputing pixels with missing values ($(Dates.now()))")
-
-    xfixedpx_imputed = BetaML.fit!(BetaML.RandomForestImputer(verbosity=HIGH),xfixedpx_train)
+    ridx == nx || @error("In trainpredict_autoencode_fixedpxdata nx ($nx) doesn't match final ridx ($ridx)")
+    xfixedpx_train = DataFrames.dropmissing(xfixedpx) # version for training
+    nx_train = size(xfixedpx_train,2)
+    verbosity >= GenFSM.HIGH && @info("    -- Number of total pixels: $(nx), number of pixels with no missing pixels (used for training): $(nx_train)")
+    verbosity >= GenFSM.HIGH && @info("    -- Imputing pixels with missing values. This may take some time... ($(Dates.now()))")
+    m_imp = BetaML.GaussianMixtureImputer(verbosity=BetaML.STD,n_classes=5,mixtures=BetaML.FullGaussian)
+    xfixedpx_imputed_data = BetaML.fit!(m_imp,Matrix(xfixedpx))
     verbosity >= GenFSM.HIGH && @info("    -- DONE imputing pixels with missing values ($(Dates.now()))")
-    exit(0)
-
-
-    dropmissing!(xfixedpx_train) # automatically disallows missing
-    nr_dropped_missing = size(xfixedpx_train,1)
-    verbosity >= GenFSM.HIGH && @info("    -- Number of total pixels: $(nr_full), number of pixels with no missing pixels (used for training): $(nr_dropped_missing)")
-
+    xfixedpx_imputed = deepcopy(xfixedpx)
+    xfixedpx_imputed[:,3:end] = xfixedpx_imputed_data[:,3:end]
+    CSV.write(joinpath(basefolder,"xfixedpx_imputed.csv.gz"),xfixedpx_imputed;compress=true)
+    CSV.write(joinpath(basefolder,"xfixedpx_train.csv.gz"),xfixedpx_train;compress=true)
 
 
     ms    = BetaML.Scaler(cache=false,skip=1:soil_texture_n_classes) # skip to scale the categorical TextureUSDA category cols
@@ -851,8 +825,8 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
     BetaML.model_save(joinpath(basefolder,"xfixedpx_ae_rs$(rs).jld2"); ma=best_model)
     CSV.write(joinpath(basefolder,"xfixedpx_ae_mase_rs$(rs).csv"),Tables.table(Float64.(ae_errors)))
     
-    xtot_reduced = BetaML.predict(best_model,xtrains)
-    xfixedpx_reduced= hcat(xfixedpx[:,1:2],DataFrames.DataFrame(xtot_reduced,:auto))
+    xtot_reduced = BetaML.predict(best_model,xfixedpx_imputed_data_scaled)
+    xfixedpx_reduced= hcat(xfixedpx_imputed[:,1:2],DataFrames.DataFrame(xtot_reduced,:auto))
     CSV.write(joinpath(basefolder,"xfixedpx_reduced_rs$(rs).csv.gz"),xfixedpx_reduced;compress=true)
 
     # Computing errors by individual dimension...
@@ -862,10 +836,10 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
 
     errs = vcat([ permutedims([
         n,
-        StatsBase.mean(xfixedpx[:,n]),
-        BetaML.relative_mean_error(xfixedpx[:,n],x̂fixedpx[:,n]),
-        BetaML.mase(xfixedpx[:,n],x̂fixedpx[:,n])
-    ]) for n in names(xfixedpx)[3:end]]...,)
+        StatsBase.mean(xfixedpx_imputed[:,n]),
+        BetaML.relative_mean_error(xfixedpx_imputed[:,n],x̂fixedpx[:,n]),
+        BetaML.mase(xfixedpx_imputed[:,n],x̂fixedpx[:,n])
+    ]) for n in names(xfixedpx_imputed)[3:end]]...,)
     errsdf = DataFrames.DataFrame(errs,["var","mean","rme","mase"])
     CSV.write(joinpath(basefolder,"xfixerpx_ae_errors_rs$(rs).csv"),errsdf)
 
