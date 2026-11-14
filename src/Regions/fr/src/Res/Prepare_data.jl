@@ -588,6 +588,10 @@ function train_autoencode_clim(settings, mask, ign_growth)
     best_model   = deepcopy(base_model)
     best_error   = Inf64
 
+    errlog_io = open(joinpath(basefolder,"ae_clim_m_mase_rs$(rs).csv"), "w")
+    println(errlog_io,"batch\tmase")
+    close(errlog_io)
+
     verbosity >= GenFSM.STD && @info("  -- training AE for climatic data using CrossValidation for the epochs (may be long)")
     for ie in 1:ae_max_ntrains
         verbosity >= GenFSM.STD && @info("  -- ae climate training attempt: $ie")
@@ -604,6 +608,9 @@ function train_autoencode_clim(settings, mask, ign_growth)
         verbosity >= GenFSM.STD && @info "  -- $(ie): mase_val: $(μ)"
         BetaML.fit!(base_model,xtrains) # base model fit
         push!(ae_errors,μ)
+        errlog_io = open(joinpath(basefolder,"ae_clim_m_mase_rs$(rs).csv"), "a")
+        println(errlog_io,"$(ie)\t$(μ)")
+        close(errlog_io)
         if μ < best_error
             best_model = deepcopy(base_model)
             best_attemp = ie
@@ -617,7 +624,7 @@ function train_autoencode_clim(settings, mask, ign_growth)
         end
     end
     BetaML.model_save(joinpath(basefolder,"ae_clim_m_rs$(rs).jld2"); ma=best_model)
-    CSV.write(joinpath(basefolder,"ae_clim_m_mase_rs$(rs).csv"),Tables.table(Float64.(ae_errors)))
+    #CSV.write(joinpath(basefolder,"ae_clim_m_mase_rs$(rs).csv"),Tables.table(Float64.(ae_errors)))
     xtot_reduced = BetaML.predict(best_model,xtrains)
     xclimh_reduced= hcat(xclimh[:,1:3],DataFrames.DataFrame(xtot_reduced,:auto))
     CSV.write(joinpath(basefolder,"xclimh_reduced_rs$(rs).csv.gz"),xclimh_reduced;compress=true)
@@ -728,6 +735,7 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
     n_xnames  = length(xnames)
     nC,nR = size(mask)
     nx    = sum(mask)
+
     #nd_dtm  = length(keys(datafiles_dtm))
     #nd_soil = length(keys(datafiles_soil))
     soil_texture_n_classes = settings["res"]["fr"]["data_sources"]["soil_texture_n_classes"]
@@ -759,21 +767,19 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
                 end
             end
         end
+        ridx == nx || @error("In trainpredict_autoencode_fixedpxdata nx ($nx) doesn't match final ridx ($ridx)")
+        xfixedpx_train = DataFrames.dropmissing(xfixedpx) # version for training
+        nx_train = size(xfixedpx_train,2)
+        verbosity >= GenFSM.HIGH && @info("    -- Number of total pixels: $(nx), number of pixels with no missing pixels (used for training): $(nx_train)")
+        verbosity >= GenFSM.HIGH && @info("    -- Imputing pixels with missing values. This may take some time... ($(Dates.now()))")
+        m_imp = BetaML.GaussianMixtureImputer(verbosity=BetaML.STD,n_classes=5,mixtures=BetaML.FullGaussian)
+        xfixedpx_imputed_data = BetaML.fit!(m_imp,Matrix(xfixedpx))
+        verbosity >= GenFSM.HIGH && @info("    -- DONE imputing pixels with missing values ($(Dates.now()))")
+        xfixedpx_imputed = deepcopy(xfixedpx)
+        xfixedpx_imputed[:,3:end] = xfixedpx_imputed_data[:,3:end]
+        CSV.write(joinpath(basefolder,"xfixedpx_imputed.csv.gz"),xfixedpx_imputed;compress=true)
+        CSV.write(joinpath(basefolder,"xfixedpx_train.csv.gz"),xfixedpx_train;compress=true)
     end
-
-    ridx == nx || @error("In trainpredict_autoencode_fixedpxdata nx ($nx) doesn't match final ridx ($ridx)")
-    xfixedpx_train = DataFrames.dropmissing(xfixedpx) # version for training
-    nx_train = size(xfixedpx_train,2)
-    verbosity >= GenFSM.HIGH && @info("    -- Number of total pixels: $(nx), number of pixels with no missing pixels (used for training): $(nx_train)")
-    verbosity >= GenFSM.HIGH && @info("    -- Imputing pixels with missing values. This may take some time... ($(Dates.now()))")
-    m_imp = BetaML.GaussianMixtureImputer(verbosity=BetaML.STD,n_classes=5,mixtures=BetaML.FullGaussian)
-    xfixedpx_imputed_data = BetaML.fit!(m_imp,Matrix(xfixedpx))
-    verbosity >= GenFSM.HIGH && @info("    -- DONE imputing pixels with missing values ($(Dates.now()))")
-    xfixedpx_imputed = deepcopy(xfixedpx)
-    xfixedpx_imputed[:,3:end] = xfixedpx_imputed_data[:,3:end]
-    CSV.write(joinpath(basefolder,"xfixedpx_imputed.csv.gz"),xfixedpx_imputed;compress=true)
-    CSV.write(joinpath(basefolder,"xfixedpx_train.csv.gz"),xfixedpx_train;compress=true)
-
 
     ms    = BetaML.Scaler(cache=false,skip=1:soil_texture_n_classes) # skip to scale the categorical TextureUSDA category cols
 
@@ -793,6 +799,10 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
     best_error   = Inf64
 
     verbosity >= GenFSM.STD && @info("  -- training AE for fixed data using CrossValidation for the epochs (may be long)")
+
+    errlog_io = open(joinpath(basefolder,"xfixedpx_ae_mase_rs$(rs).csv"), "w")
+    println(errlog_io,"batch\tmase")
+    close(errlog_io)
     for ie in 1:ae_max_ntrains
         verbosity >= GenFSM.STD && @info("  -- ae fixedpx training attempt: $ie")
         (μ,σ) = BetaML.cross_validation([xtrains],sampler) do trainData, valData, rng
@@ -808,6 +818,9 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
         verbosity >= GenFSM.STD && @info "  -- $(ie): mase_val: $(μ)"
         BetaML.fit!(base_model,xtrains) # base model fit
         push!(ae_errors,μ)
+        errlog_io = open(joinpath(basefolder,"xfixedpx_ae_mase_rs$(rs).csv"), "a")
+        println(errlog_io,"$(ie)\t$(μ)")
+        close(errlog_io)
         if μ < best_error
             best_model = deepcopy(base_model)
             best_attemp = ie
@@ -823,7 +836,7 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
     verbosity >= GenFSM.STD && @info "Done AE xfixedpx. Best mase val: $(best_error) ($(Dates.now()))"
 
     BetaML.model_save(joinpath(basefolder,"xfixedpx_ae_rs$(rs).jld2"); ma=best_model)
-    CSV.write(joinpath(basefolder,"xfixedpx_ae_mase_rs$(rs).csv"),Tables.table(Float64.(ae_errors)))
+    #CSV.write(joinpath(basefolder,"xfixedpx_ae_mase_rs$(rs).csv"),Tables.table(Float64.(ae_errors)))
     
     xtot_reduced = BetaML.predict(best_model,xfixedpx_imputed_data_scaled)
     xfixedpx_reduced= hcat(xfixedpx_imputed[:,1:2],DataFrames.DataFrame(xtot_reduced,:auto))
