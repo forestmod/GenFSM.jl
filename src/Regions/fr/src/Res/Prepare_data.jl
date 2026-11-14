@@ -739,7 +739,9 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
         verbosity >= GenFSM.STD && @info(" -- creating xfixedpx df from raster files")
         xrasters = OrderedDict{String,Rasters.Raster}([i => Rasters.Raster(datafiles[i]) |> Rasters.replace_missing for i in xnames])
         # by time (month, year) var name
-        xfixedpx   = DataFrames.DataFrame("C"=>Array{Int64}(undef,nx), "R"=>Array{Int64}(undef,nx), vec(["$(var)" => Array{Float64}(undef,nx) for var in xnames])...)
+        xfixedpx       = DataFrames.DataFrame("C"=>Array{Int64}(undef,nx), "R"=>Array{Int64}(undef,nx), vec(["$(var)" => Array{Float64}(undef,nx) for var in xnames])...)
+        # Version without missing data not imputation for training
+        xfixedpx_train = DataFrames.DataFrame("C"=>Array{Union{Missing,Int64}}(missing,nx), "R"=>Array{Union{Missing,Int64}}(missing,nx), vec(["$(var)" => Array{Union{Missing,Float64}}(missing,nx) for var in xnames])...)
         # Reformatting the data in a large matrix (records [pixels] x variables)
         ridx = 1
         (n_problematic_px, n_very_problematic_px) = (0,0)
@@ -748,6 +750,7 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
             for r in 1:nR
                 mask[c,r] == 1 || continue # skip pixels outside the mask
                 xfixedpx[ridx,[1,2]] .= [c,r]
+                xfixedpx_train[ridx,[1,2]] .= [c,r]
                 cidx = 3
                 for v in xnames
                     if(ismissing(xrasters[v][c,r]))
@@ -771,21 +774,40 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
                     else
                         #println("(v,c,r): $(v), $c, $r  - $(xrasters[v][c,r])")
                         xfixedpx[ridx,cidx] = xrasters[v][c,r]
+                        xfixedpx_train[ridx,cidx] = xrasters[v][c,r]
                     end
                     cidx +=1
                 end
                 ridx +=1
             end
         end
-        verbosity >= GenFSM.HIGH && @info("    -- finished creating xfixedpx data. Number of pixels with missing values: $(n_problematic_px), number of pixels with no neighbour pixels: $(n_very_problematic_px), number of total pixels: $(ridx)")
+        verbosity >= GenFSM.HIGH && @info("    -- finished creating xfixedpx data. Number of pixels with some missing values: $(n_problematic_px), number of pixels with no neighbour pixels: $(n_very_problematic_px), number of total pixels: $(ridx)")
         CSV.write(joinpath(basefolder,"xfixedpx.csv.gz"),xfixedpx;compress=true)
     end
 
+    nr_full = size(xfixedpx_train,1)
+
+
+    verbosity >= GenFSM.HIGH && @info("    -- Imputing pixels with missing values ($(Dates.now()))")
+
+    xfixedpx_imputed = BetaML.fit!(BetaML.RandomForestImputer(verbosity=HIGH),xfixedpx_train)
+    verbosity >= GenFSM.HIGH && @info("    -- DONE imputing pixels with missing values ($(Dates.now()))")
+    exit(0)
+
+
+    dropmissing!(xfixedpx_train) # automatically disallows missing
+    nr_dropped_missing = size(xfixedpx_train,1)
+    verbosity >= GenFSM.HIGH && @info("    -- Number of total pixels: $(nr_full), number of pixels with no missing pixels (used for training): $(nr_dropped_missing)")
+
+
+
     ms    = BetaML.Scaler(cache=false,skip=1:soil_texture_n_classes) # skip to scale the categorical TextureUSDA category cols
 
-    xtrain  = Matrix(xfixedpx[:,3:end])
+    xtrain                = Matrix(xfixedpx_train[:,3:end])
+    xfixedpx_imputed_data = Matrix(xfixedpx_imputed[:,3:end])
     BetaML.fit!(ms,xtrain)
-    xtrains = BetaML.predict(ms,xtrain)
+    xtrains                      = BetaML.predict(ms,xtrain)
+    xfixedpx_imputed_data_scaled = BetaML.predict(ms,xfixedpx_imputed_data )
     BetaML.model_save(joinpath(basefolder,"xfixedpx_ms_rs$(rs).jld2");ms)
  
     sampler = BetaML.KFold(nsplits=ae_kfolds_nsplits)
@@ -828,6 +850,7 @@ function trainpredict_autoencode_fixedpxdata(settings, mask)
 
     BetaML.model_save(joinpath(basefolder,"xfixedpx_ae_rs$(rs).jld2"); ma=best_model)
     CSV.write(joinpath(basefolder,"xfixedpx_ae_mase_rs$(rs).csv"),Tables.table(Float64.(ae_errors)))
+    
     xtot_reduced = BetaML.predict(best_model,xtrains)
     xfixedpx_reduced= hcat(xfixedpx[:,1:2],DataFrames.DataFrame(xtot_reduced,:auto))
     CSV.write(joinpath(basefolder,"xfixedpx_reduced_rs$(rs).csv.gz"),xfixedpx_reduced;compress=true)

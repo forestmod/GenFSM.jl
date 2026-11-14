@@ -9,6 +9,7 @@ using DocStringExtensions, Dates
 import Downloads 
 import Dates
 import StatsBase
+using CUDA
 import DataStructures: OrderedDict
 import Pipe: @pipe
 import HTTP
